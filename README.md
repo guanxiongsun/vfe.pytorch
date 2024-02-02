@@ -6,7 +6,7 @@ This repo contains the code for the paper:
 [MAMBA](https://arxiv.org/abs/2401.09923), STPN, TDViT, EOVOD
 
 
-Additionally, we provide archive files of two widely-used datasets, ImageNetVID and GOT-10K. The official links of these datasets are not accessible or deleted. We hope these resources can help future research.
+Additionally, we provide archive files of two widely-used datasets, [ImageNetVID](https://huggingface.co/datasets/guanxiongsun/imagenetvid/tree/main) and GOT-10K. The official links of these datasets are not accessible or deleted. We hope these resources can help future research.
 
 ## Progress
 
@@ -57,11 +57,9 @@ See [here](https://github.com/open-mmlab/mmcv#installation) for different versio
 
 ## Data preparation
 
-### Download Datasets
+### Download ImageNetVID (Video Object Detection) Dataset
 
-The original links of ImageNetVID dataset are either broken or unavailible. Here, we provide the new link to download the file for the furture reference of the community. Please download ILSVRC2015 DET and ILSVRC2015 VID datasets from [here](). 
-
-**Note:** The links expire every 30 days. If they expire, please contact me to renew it.
+The original links of ImageNetVID dataset are either broken or unavailible. Here, we provide the new link to download the file for the furture reference of the community. Please download ILSVRC2015 DET and ILSVRC2015 VID datasets from this [LINK](https://huggingface.co/datasets/guanxiongsun/imagenetvid/tree/main). 
 
 After that, we recommend to symlink the path to the datasets to `datasets/`. And the path structure should be as follows:
 
