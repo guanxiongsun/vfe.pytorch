@@ -1,8 +1,7 @@
 _base_ = [
     "../../../_base_/models/vid/faster_rcnn_r50_fpn.py",
     "../../../_base_/datasets/vid/imagenet_vid_single_frame.py",
-    "../../../_base_/default_runtime.py",
-    "../../../_base_/schedules/schedule_1x.py",
+    "../../../_base_/default_runtime.py"
 ]
 pretrained = 'https://github.com/SwinTransformer/storage/releases/download/v1.0.0/swin_tiny_patch4_window7_224.pth'  # noqa
 
@@ -30,7 +29,6 @@ model = dict(
 )
 
 optimizer = dict(
-    _delete_=True,
     type="AdamW",
     lr=0.000025,
     betas=(0.9, 0.999),

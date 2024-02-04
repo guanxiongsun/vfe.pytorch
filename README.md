@@ -3,7 +3,7 @@
 [![License](https://img.shields.io/badge/license-BSD-blue.svg)](LICENSE)
 
 This repo contains the code for the paper:
-[MAMBA](https://arxiv.org/abs/2401.09923), STPN, TDViT, EOVOD
+[MAMBA](https://arxiv.org/abs/2401.09923), [STPN](), TDViT, EOVOD
 
 
 Additionally, we provide archive files of two widely-used datasets, [ImageNetVID](https://huggingface.co/datasets/guanxiongsun/imagenetvid/tree/main) and GOT-10K. The official links of these datasets are not accessible or deleted. We hope these resources can help future research.
@@ -11,7 +11,7 @@ Additionally, we provide archive files of two widely-used datasets, [ImageNetVID
 ## Progress
 
 - [x] [MAMBA](https://arxiv.org/abs/2401.09923)
-- [ ] STPN
+- [x] [STPN]()
 - [ ] TDViT
 - [ ] EOVOD
 
@@ -23,7 +23,7 @@ Additionally, we provide archive files of two widely-used datasets, [ImageNetVID
 |     SELSA          | ResNet-101 |  81.5  |    --     |    --    |    --     | [model](https://download.openmmlab.com/mmtracking/vid/selsa/selsa_faster_rcnn_r101_dc5_1x_imagenetvid/selsa_faster_rcnn_r101_dc5_1x_imagenetvid_20201218_172724-aa961bcc.pth), [reference](https://github.com/open-mmlab/mmtracking/tree/master/configs/vid/selsa) |
 |     MEGA     |   ResNet-101  |  82.9	|62.7	|81.6	|89.4  | [model](https://drive.google.com/file/d/1ZnAdFafF1vW9Lnpw-RPF1AD_csw61lBY/view?usp=sharing), [reference](https://github.com/Scalsol/mega.pytorch/tree/master) |
 |     **MAMBA**      | ResNet-101 |  83.8 | 65.3 | 83.8 | 89.5 | [model](https://huggingface.co/guanxiongsun/vfe.pytorch/blob/main/work_dirs/mamba_r101_dc5_6x/epoch_6_model.pth), [paper](https://arxiv.org/abs/2401.09923)|
-
+|     **STPN**      | Swin-T |  85.2 | 64.1 | 84.1 | 91.4 | [model](), [paper]()|
 ## Installation
 The code are tested with the following environments:
 

@@ -100,6 +100,10 @@ def swin_converter(ckpt):
         return x
 
     for k, v in ckpt.items():
+        if k.startswith('backbone'):
+            # remove backbone.
+            k = k[9:]
+
         if k.startswith('head'):
             continue
         elif k.startswith('layers'):

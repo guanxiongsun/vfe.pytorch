@@ -2,6 +2,7 @@
 from .base import BaseVideoDetector
 from .selsa import SELSA
 from .mamba import MAMBA
+from .stpn import STPN
 
-__all__ = ['BaseVideoDetector', 'SELSA', 'MAMBA'
+__all__ = ['BaseVideoDetector', 'SELSA', 'MAMBA', 'STPN'
            ]

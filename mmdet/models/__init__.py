@@ -18,7 +18,7 @@ from .roi_heads import *  # noqa: F401,F403
 from .seg_heads import *  # noqa: F401,F403
 
 # add video models
-from .vid import SELSA, MAMBA
+from .vid import SELSA, MAMBA, STPN
 from .aggregators import SelsaAggregator, MambaAggregator
 
 __all__ = [
@@ -26,7 +26,7 @@ __all__ = [
     'DETECTORS', 'build_backbone', 'build_neck', 'build_roi_extractor',
     'build_shared_head', 'build_head', 'build_loss', 'build_detector',
     # add wrapper for video models
-    'build_model', 'SELSA', 'MAMBA',
+    'build_model', 'SELSA', 'MAMBA', 'STPN',
     'AGGREGATORS', 'build_aggregator', 'SelsaAggregator', 'MambaAggregator',
     # build memory
     'build_memory',
