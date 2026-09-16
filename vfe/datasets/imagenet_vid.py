@@ -1,8 +1,13 @@
 """ImageNet VID / DET dataset: annotation loading, ground truth and evaluation.
 
-Port of ``mmdet.datasets.{imagenet_vid_dataset,coco_video_dataset}`` (the
-annotation half; the image pipeline and reference-frame sampling come with the
-data path in Phase 5b/5d).
+Port of ``mmdet.datasets.{imagenet_vid_dataset,coco_video_dataset}``.
+Status: test-time samples are complete; training samples (ground truth through
+the pipeline, filtering of empty images) come with Phase 5d.
+
+Reference frames are chosen per sample by ``ref_img_sampling``. At test time
+with ``test_with_adaptive_stride`` (the released configs), the first frame of
+each video gets ``num_ref_imgs`` frames spread evenly over the *whole* video,
+and every later frame gets none, relying on MAMBA's memory instead.
 
 Frame order at test time is part of the published protocol, because MAMBA's
 memory depends on it. With ``shuffle_video_frames``, each video's frames are
@@ -19,12 +24,15 @@ import random
 
 import numpy as np
 
+from vfe.datasets.builder import DATASETS
 from vfe.datasets.cocovid import CocoVID
+from vfe.datasets.pipelines import Compose
 from vfe.evaluation import do_vid_evaluation
 
 __all__ = ["ImagenetVIDDataset"]
 
 
+@DATASETS.register_module()
 class ImagenetVIDDataset:
     """Args:
         ann_file: COCO-VID JSON (VID) or COCO JSON (DET, with ``load_as_video=False``).
@@ -34,6 +42,9 @@ class ImagenetVIDDataset:
         test_mode: keep every frame (training keeps only ``is_vid_train_frame``).
         shuffle_video_frames: shuffle frames within each video except the first.
         shuffle_seed: seed of that shuffle; 10 reproduces the original order.
+        pipeline: transform configs applied to ``[key frame, *reference frames]``.
+        ref_img_sampler: keyword arguments of :meth:`ref_img_sampling`, or None
+            to load the key frame alone.
     """
 
     CLASSES = (
@@ -52,6 +63,8 @@ class ImagenetVIDDataset:
         test_mode: bool = False,
         shuffle_video_frames: bool = False,
         shuffle_seed: int = 10,
+        pipeline: list | None = None,
+        ref_img_sampler: dict | None = None,
     ):
         if data_root is not None:
             if not osp.isabs(ann_file):
@@ -65,12 +78,130 @@ class ImagenetVIDDataset:
         self.shuffle_video_frames = shuffle_video_frames
         self.shuffle_seed = shuffle_seed
 
+        self.ref_img_sampler = ref_img_sampler
+        self.pipeline = Compose(pipeline or [])
+
         self.data_infos = (
             self._load_video_anns(ann_file) if load_as_video else self._load_image_anns(ann_file)
         )
 
     def __len__(self) -> int:
         return len(self.data_infos)
+
+    def __getitem__(self, idx: int):
+        if not self.test_mode:
+            raise NotImplementedError("training samples come with Phase 5d")
+        return self.prepare_data(idx)
+
+    # ---- samples -------------------------------------------------------------
+
+    def prepare_results(self, img_info: dict) -> dict:
+        results = dict(img_info=img_info, img_prefix=self.img_prefix, seg_prefix=None,
+                       proposal_file=None, bbox_fields=[], mask_fields=[], seg_fields=[],
+                       is_video_data=self.load_as_video)
+        if not self.test_mode:
+            results["ann_info"] = self.get_ann_info(img_info)
+        return results
+
+    def prepare_data(self, idx: int):
+        img_info = self.data_infos[idx]
+        if self.ref_img_sampler is not None:
+            img_infos = self.ref_img_sampling(img_info, **self.ref_img_sampler)
+            results = [self.prepare_results(info) for info in img_infos]
+        else:
+            results = self.prepare_results(img_info)
+        return self.pipeline(results)
+
+    def ref_img_sampling(self, img_info: dict, frame_range, stride: int = 1,
+                         num_ref_imgs: int = 1, filter_key_img: bool = True,
+                         method: str = "uniform", return_key_img: bool = True) -> list[dict]:
+        """Reference frames for a key frame, sorted by ``frame_id``.
+
+        Methods:
+            uniform: ``num_ref_imgs`` random frames within ``frame_range``.
+            bilateral_uniform: half from each side of the key frame.
+            test_with_adaptive_stride: on a video's first frame only,
+                ``num_ref_imgs`` frames evenly spread over the whole video
+                (index ``round(i * stride)``, Python's round-half-to-even).
+            test_with_fix_stride: a window of ``stride``-spaced frames on the
+                first frame, then one new frame every ``stride`` frames.
+
+        The random methods draw from Python's global ``random``, as the
+        original did.
+        """
+        if isinstance(frame_range, int):
+            if frame_range < 0:
+                raise ValueError("frame_range can not be negative")
+            frame_range = [-frame_range, frame_range]
+        elif isinstance(frame_range, (list, tuple)):
+            if len(frame_range) != 2 or frame_range[0] > 0 or frame_range[1] < 0:
+                raise ValueError(f"frame_range must be [<=0, >=0], got {frame_range}")
+            frame_range = list(frame_range)
+        else:
+            raise TypeError("frame_range must be an int or a list")
+        if "test" in method and frame_range[1] - frame_range[0] != num_ref_imgs:
+            # The original warned and rewrote its own config; refuse instead.
+            raise ValueError(f"{method} needs num_ref_imgs == frame_range[1] - frame_range[0]")
+
+        if (not self.load_as_video or img_info.get("frame_id", -1) < 0
+                or frame_range == [0, 0]):
+            ref_img_infos = [img_info.copy() for _ in range(num_ref_imgs)]
+        else:
+            vid_id, img_id, frame_id = img_info["video_id"], img_info["id"], img_info["frame_id"]
+            img_ids = self.coco.get_img_ids_from_vid(vid_id)
+            left = max(0, frame_id + frame_range[0])
+            right = min(frame_id + frame_range[1], len(img_ids) - 1)
+
+            ref_img_ids = []
+            if method == "uniform":
+                valid_ids = img_ids[left:right + 1]
+                if filter_key_img and img_id in valid_ids:
+                    valid_ids.remove(img_id)
+                ref_img_ids.extend(random.sample(valid_ids, min(num_ref_imgs, len(valid_ids))))
+            elif method == "bilateral_uniform":
+                if num_ref_imgs % 2:
+                    raise ValueError("bilateral_uniform needs an even num_ref_imgs")
+                for valid_ids in (img_ids[left:frame_id + 1], img_ids[frame_id:right + 1]):
+                    if filter_key_img and img_id in valid_ids:
+                        valid_ids.remove(img_id)
+                    num_samples = min(num_ref_imgs // 2, len(valid_ids))
+                    ref_img_ids.extend(random.sample(valid_ids, num_samples))
+            elif method == "test_with_adaptive_stride":
+                if frame_id == 0:
+                    adaptive = float(len(img_ids) - 1) / (num_ref_imgs - 1)
+                    ref_img_ids.extend(img_ids[round(i * adaptive)] for i in range(num_ref_imgs))
+            elif method == "test_with_fix_stride":
+                if frame_id == 0:
+                    ref_img_ids.extend(img_ids[0] for _ in range(frame_range[0], 1))
+                    ref_img_ids.extend(
+                        img_ids[min(round(i * stride), len(img_ids) - 1)]
+                        for i in range(1, frame_range[1] + 1)
+                    )
+                elif frame_id % stride == 0:
+                    ref_img_ids.append(
+                        img_ids[min(round(frame_id + frame_range[1] * stride), len(img_ids) - 1)]
+                    )
+                # Only this method sets these; MAMBA reads their absence as
+                # "adaptive stride".
+                img_info["num_left_ref_imgs"] = abs(frame_range[0])
+                img_info["frame_stride"] = stride
+            else:
+                raise NotImplementedError(f"unknown ref_img_sampling method {method!r}")
+
+            if not self.test_mode:
+                if not ref_img_ids:
+                    ref_img_ids = [img_id] * num_ref_imgs
+                if len(ref_img_ids) < num_ref_imgs:
+                    ref_img_ids += [ref_img_ids[0]] * (num_ref_imgs - len(ref_img_ids))
+
+            ref_img_infos = []
+            for ref_img_id in ref_img_ids:
+                info = dict(self.coco.load_imgs([ref_img_id])[0])
+                info["filename"] = info["file_name"]
+                ref_img_infos.append(info)
+            ref_img_infos = sorted(ref_img_infos, key=lambda i: i["frame_id"])
+
+        return [img_info, *ref_img_infos] if return_key_img else ref_img_infos
 
     # ---- annotations ---------------------------------------------------------
 
