@@ -2,10 +2,9 @@
 ``mmdet.datasets.pipelines.transforms`` and mmtrack's ``Seq*`` wrappers that the
 VID configs use.
 
-Status: the test-time paths are complete: single-scale keep-ratio resize, no
-flip, normalise, pad. Training-only paths (box resizing, actual flipping,
-multi-scale selection) raise ``NotImplementedError`` until Phase 5d ports them,
-so a config needing them fails loudly instead of silently skipping a step.
+Ported: single-scale keep-ratio resize (image and boxes), flips, normalise and
+pad, which is everything MAMBA's train and test pipelines use. Multi-scale
+selection, masks and segmentation maps raise ``NotImplementedError``.
 
 The ``Seq*`` variants run the single-frame transform on each frame of a clip;
 with ``share_params`` every frame gets the key frame's random choices.
@@ -19,13 +18,13 @@ from vfe.datasets.builder import PIPELINES
 from vfe.datasets.pipelines.image import imnormalize, impad, impad_to_multiple, imrescale
 
 __all__ = ["Resize", "SeqResize", "RandomFlip", "SeqRandomFlip", "Normalize", "SeqNormalize",
-           "Pad", "SeqPad"]
+           "Pad", "SeqPad", "bbox_flip", "imflip"]
 
 
-def _require_no_annotations(results: dict, what: str) -> None:
-    for key in ("bbox_fields", "mask_fields", "seg_fields"):
+def _require_no_masks(results: dict, what: str) -> None:
+    for key in ("mask_fields", "seg_fields"):
         if results.get(key):
-            raise NotImplementedError(f"{what} of {key} is not ported yet (Phase 5d)")
+            raise NotImplementedError(f"{what} of {key} is not ported")
 
 
 @PIPELINES.register_module()
@@ -39,7 +38,8 @@ class Resize:
     def __init__(self, img_scale=None, multiscale_mode="range", ratio_range=None,
                  keep_ratio=True, bbox_clip_border=True, backend="cv2", override=False):
         if img_scale is None or isinstance(img_scale, list) and len(img_scale) != 1:
-            raise NotImplementedError("only a single img_scale is ported (Phase 5d)")
+            raise NotImplementedError("only a single img_scale is ported; multi-scale "
+                                      "training (STPN) comes with Phase 7")
         if ratio_range is not None or override or not keep_ratio or backend != "cv2":
             raise NotImplementedError(
                 "ratio_range / override / keep_ratio=False / non-cv2 backends are not ported"
@@ -69,7 +69,15 @@ class Resize:
             results["scale_factor"] = np.array([w_scale, h_scale, w_scale, h_scale],
                                                dtype=np.float32)
             results["keep_ratio"] = self.keep_ratio
-        _require_no_annotations(results, "Resize")
+
+        for key in results.get("bbox_fields", []):
+            bboxes = results[key] * results["scale_factor"]
+            if self.bbox_clip_border:
+                img_shape = results["img_shape"]
+                bboxes[:, 0::2] = np.clip(bboxes[:, 0::2], 0, img_shape[1])
+                bboxes[:, 1::2] = np.clip(bboxes[:, 1::2], 0, img_shape[0])
+            results[key] = bboxes
+        _require_no_masks(results, "Resize")
         return results
 
 
@@ -91,13 +99,38 @@ class SeqResize(Resize):
         return outs
 
 
+def bbox_flip(bboxes: np.ndarray, img_shape: tuple, direction: str) -> np.ndarray:
+    """Mirror ``(..., 4k)`` boxes within an image of ``img_shape``."""
+    if bboxes.shape[-1] % 4:
+        raise ValueError("box arrays must have 4k columns")
+    flipped = bboxes.copy()
+    if direction in ("horizontal", "diagonal"):
+        w = img_shape[1]
+        flipped[..., 0::4] = w - bboxes[..., 2::4]
+        flipped[..., 2::4] = w - bboxes[..., 0::4]
+    if direction in ("vertical", "diagonal"):
+        h = img_shape[0]
+        flipped[..., 1::4] = h - bboxes[..., 3::4]
+        flipped[..., 3::4] = h - bboxes[..., 1::4]
+    if direction not in ("horizontal", "vertical", "diagonal"):
+        raise ValueError(f"invalid flip direction {direction!r}")
+    return flipped
+
+
+def imflip(img: np.ndarray, direction: str) -> np.ndarray:
+    """A flipped *view* (negative strides), as ``mmcv.imflip``; the next
+    transform that copies (``Normalize``) makes it contiguous."""
+    axis = {"horizontal": 1, "vertical": 0, "diagonal": (0, 1)}[direction]
+    return np.flip(img, axis=axis)
+
+
 @PIPELINES.register_module()
 class RandomFlip:
-    """Flip decided by ``results['flip']``; only the no-flip path is ported."""
+    """Flip image and boxes when ``results['flip']`` says so."""
 
     def __init__(self, flip_ratio=None, direction="horizontal"):
         if isinstance(flip_ratio, list) or isinstance(direction, list):
-            raise NotImplementedError("per-direction flip ratios are not ported (Phase 5d)")
+            raise NotImplementedError("per-direction flip ratios are not ported")
         if flip_ratio is not None and not 0 <= flip_ratio <= 1:
             raise ValueError(f"flip_ratio must be in [0, 1], got {flip_ratio}")
         if direction not in ("horizontal", "vertical", "diagonal"):
@@ -110,7 +143,12 @@ class RandomFlip:
             raise NotImplementedError("RandomFlip deciding by itself is not ported; "
                                       "use SeqRandomFlip(share_params=True)")
         if results["flip"]:
-            raise NotImplementedError("flipping is not ported yet (Phase 5d)")
+            direction = results["flip_direction"]
+            for key in results.get("img_fields", ["img"]):
+                results[key] = imflip(results[key], direction)
+            for key in results.get("bbox_fields", []):
+                results[key] = bbox_flip(results[key], results["img_shape"], direction)
+            _require_no_masks(results, "RandomFlip")
         return results
 
 
@@ -186,7 +224,7 @@ class Pad:
         results["pad_shape"] = padded.shape
         results["pad_fixed_size"] = self.size
         results["pad_size_divisor"] = self.size_divisor
-        _require_no_annotations(results, "Pad")
+        _require_no_masks(results, "Pad")
         return results
 
 

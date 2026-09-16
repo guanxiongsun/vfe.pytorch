@@ -6,8 +6,8 @@ The originals wrapped image metas in ``mmcv.DataContainer`` so mmcv's collate
 would leave them unstacked. Here metas stay plain Python objects and
 :mod:`vfe.datasets.collate` handles them explicitly.
 
-Status: images, metas and proposals are handled; ground-truth keys
-(``SeqDefaultFormatBundle``) come with the training path in Phase 5d.
+``SeqDefaultFormatBundle`` is the training counterpart of
+``MultiImagesToTensor``: it also converts ground truth to tensors.
 """
 
 from __future__ import annotations
@@ -17,7 +17,8 @@ import torch
 
 from vfe.datasets.builder import PIPELINES
 
-__all__ = ["VideoCollect", "ConcatVideoReferences", "MultiImagesToTensor", "ToList"]
+__all__ = ["VideoCollect", "ConcatVideoReferences", "MultiImagesToTensor", "ToList",
+           "SeqDefaultFormatBundle"]
 
 DEFAULT_META_KEYS = ("filename", "ori_filename", "ori_shape", "img_shape", "pad_shape",
                      "scale_factor", "flip", "flip_direction", "img_norm_cfg", "frame_id",
@@ -149,3 +150,43 @@ class ToList:
 
     def __call__(self, results: dict) -> dict:
         return {key: [value] for key, value in results.items()}
+
+
+@PIPELINES.register_module()
+class SeqDefaultFormatBundle:
+    """Images to CHW / NCHW tensors and ground-truth arrays to tensors; the
+    references' keys get ``ref_prefix``. Returns one dict.
+
+    The original wrapped values in ``DataContainer`` to steer mmcv's collate
+    (stack images, keep boxes as per-sample lists, keep metas on the CPU);
+    :func:`vfe.datasets.collate.collate_video_train` applies those rules by key.
+    """
+
+    GT_KEYS = ("proposals", "gt_bboxes", "gt_bboxes_ignore", "gt_labels", "gt_instance_ids",
+               "gt_match_indices")
+
+    def __init__(self, ref_prefix: str = "ref"):
+        self.ref_prefix = ref_prefix
+
+    def __call__(self, results: list[dict]) -> dict:
+        outs = [self._format(r) for r in results]
+        data = dict(outs[0])
+        if len(outs) > 1:
+            for key, value in outs[1].items():
+                data[f"{self.ref_prefix}_{key}"] = value
+        return data
+
+    def _format(self, results: dict) -> dict:
+        if "img" in results:
+            img = results["img"]
+            if len(img.shape) == 3:
+                img = np.ascontiguousarray(img.transpose(2, 0, 1))
+            else:
+                img = np.ascontiguousarray(img.transpose(3, 2, 0, 1))
+            results["img"] = torch.from_numpy(img)
+        for key in self.GT_KEYS:
+            if key in results:
+                results[key] = torch.from_numpy(results[key])
+        if "gt_semantic_seg" in results:
+            raise NotImplementedError("gt_semantic_seg is not ported")
+        return results

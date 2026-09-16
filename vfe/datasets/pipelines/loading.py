@@ -11,7 +11,8 @@ import numpy as np
 from vfe.datasets.builder import PIPELINES
 from vfe.datasets.pipelines.image import imfrombytes
 
-__all__ = ["LoadImageFromFile", "LoadMultiImagesFromFile"]
+__all__ = ["LoadImageFromFile", "LoadMultiImagesFromFile", "LoadAnnotations",
+           "SeqLoadAnnotations"]
 
 
 @PIPELINES.register_module()
@@ -52,3 +53,48 @@ class LoadMultiImagesFromFile(LoadImageFromFile):
 
     def __call__(self, results: list[dict]) -> list[dict]:
         return [super(LoadMultiImagesFromFile, self).__call__(r) for r in results]
+
+
+@PIPELINES.register_module()
+class LoadAnnotations:
+    """Copy ground truth from ``ann_info`` into the results: ``gt_bboxes``,
+    ``gt_bboxes_ignore``, ``gt_labels``, and register the box fields so later
+    geometric transforms move them with the image. Masks and segmentation
+    are not ported (no config uses them)."""
+
+    def __init__(self, with_bbox: bool = True, with_label: bool = True, with_mask: bool = False,
+                 with_seg: bool = False, poly2mask: bool = True, file_client_args=None):
+        if with_mask or with_seg:
+            raise NotImplementedError("mask / segmentation annotations are not ported")
+        self.with_bbox = with_bbox
+        self.with_label = with_label
+
+    def __call__(self, results: dict) -> dict:
+        ann_info = results["ann_info"]
+        if self.with_bbox:
+            results["gt_bboxes"] = ann_info["bboxes"].copy()
+            if ann_info.get("bboxes_ignore") is not None:
+                results["gt_bboxes_ignore"] = ann_info["bboxes_ignore"].copy()
+                results["bbox_fields"].append("gt_bboxes_ignore")
+            results["bbox_fields"].append("gt_bboxes")
+        if self.with_label:
+            results["gt_labels"] = ann_info["labels"].copy()
+        return results
+
+
+@PIPELINES.register_module()
+class SeqLoadAnnotations(LoadAnnotations):
+    """Per frame; ``with_track`` also loads ``gt_instance_ids``."""
+
+    def __init__(self, with_track: bool = False, **kwargs):
+        super().__init__(**kwargs)
+        self.with_track = with_track
+
+    def __call__(self, results: list[dict]) -> list[dict]:
+        outs = []
+        for frame in results:
+            frame = super().__call__(frame)
+            if self.with_track:
+                frame["gt_instance_ids"] = frame["ann_info"]["instance_ids"].copy()
+            outs.append(frame)
+        return outs

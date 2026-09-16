@@ -122,10 +122,15 @@ def run(impl):
     return out
 
 
-def compare(path_a, path_b):
+def compare(path_a, path_b, label="VID PIPELINE", expect=None):
+    """Bit-exact comparison; ``expect`` maps keys to values both sides must hold."""
     a = torch.load(path_a, map_location="cpu", weights_only=False)
     b = torch.load(path_b, map_location="cpu", weights_only=False)
     failures = []
+    for key, value in (expect or {}).items():
+        for side, artifacts in (("A", a), ("B", b)):
+            if key in artifacts and artifacts[key].tolist() != value:
+                failures.append(f"{key}: {side} has {artifacts[key].tolist()}, expected {value}")
     for key in sorted(set(a) | set(b)):
         if key not in a or key not in b:
             failures.append(f"{key}: only in {'A' if key in a else 'B'}")
@@ -143,7 +148,7 @@ def compare(path_a, path_b):
         print(f"FAIL  {note}")
     print("-" * 70)
     print(f"{len(failures)} of {len(set(a) | set(b))} artifact(s) differ" if failures
-          else f"VID PIPELINE PARITY OK ({len(a)} artifacts, all bit-exact)")
+          else f"{label} PARITY OK ({len(a)} artifacts, all bit-exact)")
     raise SystemExit(1 if failures else 0)
 
 

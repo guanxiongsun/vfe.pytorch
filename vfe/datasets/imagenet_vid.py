@@ -1,8 +1,12 @@
 """ImageNet VID / DET dataset: annotation loading, ground truth and evaluation.
 
-Port of ``mmdet.datasets.{imagenet_vid_dataset,coco_video_dataset}``.
-Status: test-time samples are complete; training samples (ground truth through
-the pipeline, filtering of empty images) come with Phase 5d.
+Port of ``mmdet.datasets.{imagenet_vid_dataset,coco_video_dataset}`` and the
+parts of ``CustomDataset`` / ``CocoDataset`` they inherited.
+
+In training mode (as in mmdet): images without an annotation of the 30
+classes, or smaller than 32 px, are dropped; every image gets an aspect-ratio
+``flag`` (1 if wider than tall) for the group sampler; and a sample the
+pipeline rejects is replaced by a random one from the same group.
 
 Reference frames are chosen per sample by ``ref_img_sampling``. At test time
 with ``test_with_adaptive_stride`` (the released configs), the first frame of
@@ -45,6 +49,8 @@ class ImagenetVIDDataset:
         pipeline: transform configs applied to ``[key frame, *reference frames]``.
         ref_img_sampler: keyword arguments of :meth:`ref_img_sampling`, or None
             to load the key frame alone.
+        filter_empty_gt: in training, drop images with no annotation of
+            ``CLASSES``.
     """
 
     CLASSES = (
@@ -65,6 +71,7 @@ class ImagenetVIDDataset:
         shuffle_seed: int = 10,
         pipeline: list | None = None,
         ref_img_sampler: dict | None = None,
+        filter_empty_gt: bool = True,
     ):
         if data_root is not None:
             if not osp.isabs(ann_file):
@@ -81,17 +88,59 @@ class ImagenetVIDDataset:
         self.ref_img_sampler = ref_img_sampler
         self.pipeline = Compose(pipeline or [])
 
+        self.filter_empty_gt = filter_empty_gt
+
         self.data_infos = (
             self._load_video_anns(ann_file) if load_as_video else self._load_image_anns(ann_file)
         )
+        if not test_mode:
+            valid_inds = self._filter_imgs()
+            self.data_infos = [self.data_infos[i] for i in valid_inds]
+            self._set_group_flag()
 
     def __len__(self) -> int:
         return len(self.data_infos)
 
     def __getitem__(self, idx: int):
-        if not self.test_mode:
-            raise NotImplementedError("training samples come with Phase 5d")
-        return self.prepare_data(idx)
+        if self.test_mode:
+            return self.prepare_data(idx)
+        while True:
+            data = self.prepare_data(idx)
+            if data is not None:
+                return data
+            idx = self._rand_another(idx)
+
+    # ---- training-mode bookkeeping ---------------------------------------------
+
+    def _filter_imgs(self, min_size: int = 32) -> list[int]:
+        """Indices of images to keep; also narrows ``img_ids`` to match."""
+        ids_with_ann = {ann["image_id"] for ann in self.coco.anns.values()}
+        ids_in_cat = set()
+        for cat_id in self.cat_ids:
+            ids_in_cat |= set(self.coco.cat_to_imgs[cat_id])
+        ids_in_cat &= ids_with_ann
+
+        valid_inds, valid_img_ids = [], []
+        for i, img_info in enumerate(self.data_infos):
+            img_id = self.img_ids[i]
+            if self.filter_empty_gt and img_id not in ids_in_cat:
+                continue
+            if min(img_info["width"], img_info["height"]) >= min_size:
+                valid_inds.append(i)
+                valid_img_ids.append(img_id)
+        self.img_ids = valid_img_ids
+        return valid_inds
+
+    def _set_group_flag(self) -> None:
+        """1 for landscape images, 0 otherwise: batches never mix the two."""
+        self.flag = np.zeros(len(self), dtype=np.uint8)
+        for i, img_info in enumerate(self.data_infos):
+            if img_info["width"] / img_info["height"] > 1:
+                self.flag[i] = 1
+
+    def _rand_another(self, idx: int) -> int:
+        pool = np.where(self.flag == self.flag[idx])[0]
+        return np.random.choice(pool)
 
     # ---- samples -------------------------------------------------------------
 

@@ -79,6 +79,10 @@ class CocoVID:
             self.imgs[img["id"]] = img
 
         self.cats = {cat["id"]: cat for cat in dataset.get("categories", [])}
+        self.cat_to_imgs: dict[int, list[int]] = defaultdict(list)
+        if "categories" in dataset:
+            for ann in dataset.get("annotations", []):
+                self.cat_to_imgs[ann["category_id"]].append(ann["image_id"])
 
     # ---- lookups ---------------------------------------------------------------
 
