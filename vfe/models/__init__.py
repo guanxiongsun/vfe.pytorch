@@ -22,6 +22,7 @@ from .builder import (
     build_roi_extractor,
     build_shared_head,
 )
+from .dense_heads import AnchorHead, RPNHead
 from .losses import Accuracy, CrossEntropyLoss, L1Loss, SmoothL1Loss, accuracy
 from .necks import FPN, ChannelMapper
 
@@ -52,6 +53,8 @@ __all__ = [
     "SwinTransformer",
     "ChannelMapper",
     "FPN",
+    "AnchorHead",
+    "RPNHead",
     "CrossEntropyLoss",
     "SmoothL1Loss",
     "L1Loss",

@@ -176,7 +176,7 @@ Two divergences that forced reimplementation rather than wrapping:
 MAMBA first: it is the primary reproduction target and its backbone/neck are already verified.
 - [x] **4a** Anchor generator, `DeltaXYWHBBoxCoder`, `MaxIoUAssigner`/`RandomSampler`, bbox transforms, `multiclass_nms` — `vfe/core/`. Parity: `tools/checks/parity_core.py`, **118 artifacts bit-exact** (`--atol 0 --rtol 0`) on CPU *and* CUDA.
 - [x] **4b** `CrossEntropyLoss` (softmax + sigmoid), `SmoothL1Loss`, `L1Loss`, `accuracy` — `vfe/models/losses/`. Parity: `tools/checks/parity_losses.py`, **45 artifacts**, CPU and CUDA.
-- [ ] **4c** RPN head (`AnchorHead` + `RPNHead`).
+- [x] **4c** RPN head (`AnchorHead` + `RPNHead`) — `vfe/models/dense_heads/`. Parity: `tools/checks/parity_rpn.py`, **80 artifacts** covering forward, `get_bboxes` (both the single-level DC5 and five-level FPN anchor layouts) and `loss`/`get_targets`. CUDA: everything bit-exact bar 7 classification losses at ≤6e-8. CPU: 75/80 bit-exact, the rest downstream of a torch CPU conv difference on the 10×7 feature map (see below).
 - [ ] **4d** Standard RoI head (`SingleRoIExtractor`, `Shared2FCBBoxHead`, `StandardRoIHead`).
 - [ ] **4e** `BaseDetector` / `TwoStageDetector` / `FasterRCNN`; parity on `simple_test`.
 - [ ] **4f** MAMBA detector + aggregator + MAMBA RoI head.
@@ -185,6 +185,7 @@ MAMBA first: it is the primary reproduction target and its backbone/neck are alr
 
 Two notes on what the parity harnesses measure, and where the noise floor sits:
 - **Bit-exactness is achievable for anything built from plain elementwise arithmetic**, and worth insisting on — all 118 core artifacts and every `smooth_l1`/`l1`/`accuracy` artifact match exactly across torch 1.10 → 2.10. Divergence is confined to the **fused kernels**: `F.cross_entropy` and `binary_cross_entropy_with_logits` differ by ≤9.5e-7 on a ~1.7e+1 scale (≈6e-8 relative, a few ULP). That is the framework, not the port, so `parity_losses.py` defaults to 1e-6 and *prints the observed difference* so a real regression stands out above the floor.
+- **A third fixture trap, found in 4c: `F.conv2d` on CPU is not version-stable at small spatial sizes.** Given bit-identical input and weights, torch 1.10 and 2.10 differ by 1.3e-6 on a 10×7 feature map while the 19×13 map above it is bit-exact — they pick different blocking below some threshold. It only shows up on FPN's top level, and only on CPU; CUDA is bit-exact throughout. Verified with a standalone `F.conv2d` probe before touching the port, which is the habit worth keeping: **reproduce the divergence outside the model first.** All three traps so far were in the harness, not the code under test.
 - **Losses are compared on their gradient too, not just their value.** A loss can be numerically right and still train wrong if `weight` is applied after reduction instead of before; only `d(loss)/d(pred)` notices. Two fixture traps cost real time and are documented in the harness docstrings: `torch.softmax` drifts ~1.8e-7 between torch versions (so don't build test inputs with it), and exactly-tied NMS scores come back in either order from mmcv vs torchvision (so make the scores tie-free). Both initially looked exactly like porting bugs.
 
 ### Phase 5 — Data pipeline + eval
