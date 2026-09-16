@@ -1,5 +1,6 @@
 """Model components. Importing this package populates the registries."""
 
+from .aggregators import MambaAggregator
 from .backbones import BasicBlock, Bottleneck, ResLayer, ResNet, SwinTransformer
 from .builder import (
     AGGREGATORS,
@@ -25,15 +26,19 @@ from .builder import (
 from .dense_heads import AnchorHead, RPNHead
 from .detectors import BaseDetector, FasterRCNN, TwoStageDetector, parse_losses
 from .losses import Accuracy, CrossEntropyLoss, L1Loss, SmoothL1Loss, accuracy
+from .memory import MemoryBank
 from .necks import FPN, ChannelMapper
 from .roi_heads import (
     BaseRoIExtractor,
     BBoxHead,
     ConvFCBBoxHead,
+    MambaBBoxHead,
+    MambaRoIHead,
     Shared2FCBBoxHead,
     SingleRoIExtractor,
     StandardRoIHead,
 )
+from .vid import MAMBA, BaseVideoDetector
 
 __all__ = [
     "MODELS",
@@ -74,6 +79,12 @@ __all__ = [
     "ConvFCBBoxHead",
     "Shared2FCBBoxHead",
     "StandardRoIHead",
+    "MambaBBoxHead",
+    "MambaRoIHead",
+    "MambaAggregator",
+    "MemoryBank",
+    "BaseVideoDetector",
+    "MAMBA",
     "CrossEntropyLoss",
     "SmoothL1Loss",
     "L1Loss",

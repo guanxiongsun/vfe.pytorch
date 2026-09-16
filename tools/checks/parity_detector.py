@@ -170,6 +170,33 @@ def checksum(t):
     return torch.cat([torch.stack([t.sum(), t.abs().sum(), (t * t).sum()]), head])
 
 
+def record_init(out, tag, model, exact_prefix=None):
+    """Artifacts describing ``model`` right after ``init_weights()``; see the
+    module docstring. Parameters and float buffers under ``exact_prefix`` came
+    from a checkpoint and must match exactly. Leaves the model in train mode."""
+    named = sorted(model.named_parameters())
+    out[f"{tag}/param_names"] = encode_str("\n".join(n for n, _ in named))
+    out[f"{tag}/requires_grad"] = torch.tensor([p.requires_grad for _, p in named])
+    for pname, param in named:
+        if exact_prefix is not None and pname.startswith(exact_prefix):
+            out[f"{tag}/exact/{pname}"] = checksum(param)
+        else:
+            out[f"{tag}/stats/{pname}"] = tensor_stats(param)
+    if exact_prefix is not None:
+        for bname, buf in sorted(model.named_buffers()):
+            if bname.startswith(exact_prefix) and buf.dtype.is_floating_point:
+                out[f"{tag}/exact/{bname}"] = checksum(buf)
+
+    model.train()
+    bn_modes = [
+        (mname, m.training)
+        for mname, m in sorted(model.named_modules())
+        if isinstance(m, torch.nn.modules.batchnorm._BatchNorm)
+    ]
+    out[f"{tag}/bn_names"] = encode_str("\n".join(n for n, _ in bn_modes))
+    out[f"{tag}/bn_training"] = torch.tensor([t for _, t in bn_modes], dtype=torch.bool)
+
+
 def require_distinct(scores, what):
     """Refuse training proposals whose scores tie.
 
@@ -233,27 +260,8 @@ def run(impl, device):
 
         # ---- init -----------------------------------------------------------
         model.init_weights()
-        named = sorted(model.named_parameters())
-        out[f"init/{name}/param_names"] = encode_str("\n".join(n for n, _ in named))
-        out[f"init/{name}/requires_grad"] = torch.tensor([p.requires_grad for _, p in named])
-        for pname, param in named:
-            if name == "dc5" and pname.startswith("backbone."):
-                out[f"init/{name}/exact/{pname}"] = checksum(param)
-            else:
-                out[f"init/{name}/stats/{pname}"] = tensor_stats(param)
-        if name == "dc5":
-            for bname, buf in sorted(model.named_buffers()):
-                if bname.startswith("backbone.") and buf.dtype.is_floating_point:
-                    out[f"init/{name}/exact/{bname}"] = checksum(buf)
-
-        model.train()
-        bn_modes = [
-            (mname, m.training)
-            for mname, m in sorted(model.named_modules())
-            if isinstance(m, torch.nn.modules.batchnorm._BatchNorm)
-        ]
-        out[f"init/{name}/bn_names"] = encode_str("\n".join(n for n, _ in bn_modes))
-        out[f"init/{name}/bn_training"] = torch.tensor([t for _, t in bn_modes], dtype=torch.bool)
+        record_init(out, f"init/{name}", model,
+                    exact_prefix="backbone." if name == "dc5" else None)
 
         # ---- train / test weights --------------------------------------------
         # dc5 keeps the pretrained backbone just loaded; swin has none.
@@ -355,6 +363,22 @@ def compare_stats(key, sa, sb):
 RTOL_OVERRIDES = {"test/swin/": 1e-4}
 
 
+# An unmatched detection may instead pair with a *suppression-equivalent*
+# one: same label, score equal within tolerance, IoU above this. See below.
+SWAP_IOU = 0.5
+# ...but only this many, as a fraction of the set. A real bug moves far more.
+MAX_SWAP_FRACTION = 0.02
+
+
+def _pairwise_iou(boxes_a, boxes_b):
+    lt = torch.max(boxes_a[:, None, :2], boxes_b[None, :, :2])
+    rb = torch.min(boxes_a[:, None, 2:], boxes_b[None, :, 2:])
+    inter = (rb - lt).clamp(min=0).prod(-1)
+    area_a = (boxes_a[:, 2:] - boxes_a[:, :2]).clamp(min=0).prod(-1)
+    area_b = (boxes_b[:, 2:] - boxes_b[:, :2]).clamp(min=0).prod(-1)
+    return inter / (area_a[:, None] + area_b[None, :] - inter).clamp(min=1e-12)
+
+
 def match_detections(prefix, a, b, rtol, atol):
     """Compare one ``{prefix}/boxes|scores|labels[|payload]`` group as a *set*.
 
@@ -363,14 +387,24 @@ def match_detections(prefix, a, b, rtol, atol):
     order. Each detection on side A must pair with a distinct one on side B
     that has the same label and a box and score within tolerance. An optional
     ``payload`` (extra per-row values, e.g. logits) must then agree too.
-    Returns ``(failure message or None, worst relative difference)``.
+
+    Near-ties can also change NMS's *selection*: when two same-class
+    candidates overlap above the NMS threshold and their scores are equal to
+    within float noise, which one survives is decided by that noise. (Seen in
+    ``parity_mamba``: two boxes clipped to the same image corner, 1.5 px apart
+    in y1, scores 1e-7 apart, IoU 0.56.) A second pass therefore accepts an
+    unmatched detection whose partner could have suppressed it -- same label,
+    score within tolerance, IoU >= ``SWAP_IOU`` -- up to
+    ``MAX_SWAP_FRACTION`` of the set, and the count is always reported.
+
+    Returns ``(failure message or None, worst relative difference, swaps)``.
     """
     ba, sa, la = a[f"{prefix}/boxes"], a[f"{prefix}/scores"], a[f"{prefix}/labels"]
     bb, sb, lb = b[f"{prefix}/boxes"], b[f"{prefix}/scores"], b[f"{prefix}/labels"]
     if len(ba) != len(bb):
-        return f"{prefix}: {len(ba)} vs {len(bb)} detections", 0.0
+        return f"{prefix}: {len(ba)} vs {len(bb)} detections", 0.0, 0
     if len(ba) == 0:
-        return None, 0.0
+        return None, 0.0, 0
     box_scale = ba.abs().max().item()
     score_scale = sa.abs().max().item()
     box_tol = atol + rtol * box_scale
@@ -400,17 +434,38 @@ def match_detections(prefix, a, b, rtol, atol):
         worst = max(worst, box_dist[i, j].item() / box_scale, score_dist[i, j].item() / score_scale)
         if payload_dist is not None:
             worst = max(worst, payload_dist[i, j].item() / payload_scale)
+
+    swaps = 0
+    if unmatched:
+        iou = _pairwise_iou(ba, bb)
+        swappable = (la[:, None] == lb[None, :]) & (score_dist <= score_tol) & (iou >= SWAP_IOU)
+        still_unmatched = []
+        for i in unmatched:
+            candidates = (swappable[i] & ~used).nonzero().flatten()
+            if len(candidates) == 0:
+                still_unmatched.append(i)
+                continue
+            used[candidates[torch.argmax(iou[i, candidates])].item()] = True
+            swaps += 1
+        unmatched = still_unmatched
     if unmatched:
         return (f"{prefix}: {len(unmatched)} of {len(ba)} detections have no match within "
-                f"{rtol:.0e} of scale (first: A[{unmatched[0]}])"), worst
-    return None, worst
+                f"{rtol:.0e} of scale (first: A[{unmatched[0]}])"), worst, swaps
+    if swaps > MAX_SWAP_FRACTION * len(ba):
+        return (f"{prefix}: {swaps} of {len(ba)} detections matched only as NMS-equivalent "
+                f"swaps, more than {MAX_SWAP_FRACTION:.0%}"), worst, swaps
+    return None, worst, swaps
 
 
-def compare(path_a, path_b, atol, rtol):
+def compare(path_a, path_b, atol, rtol, rtol_overrides=None, label="DETECTOR"):
+    """Shared by the other model-level harnesses. ``rtol_overrides`` maps key
+    prefixes to a looser rtol; each entry should be justified where it is
+    defined."""
+    rtol_overrides = RTOL_OVERRIDES if rtol_overrides is None else rtol_overrides
     a = torch.load(path_a, map_location="cpu", weights_only=False)
     b = torch.load(path_b, map_location="cpu", weights_only=False)
 
-    failures, exact, worst, worst_key = [], 0, 0.0, None
+    failures, notes, exact, worst, worst_key = [], [], 0, 0.0, None
     keys = sorted(set(a) | set(b))
     det_prefixes = sorted({k[: -len("/boxes")] for k in keys if k.endswith("/boxes")})
     det_keys = {f"{p}/{f}" for p in det_prefixes for f in ("boxes", "scores", "labels", "payload")}
@@ -419,10 +474,12 @@ def compare(path_a, path_b, atol, rtol):
                                                 f"{prefix}/labels")):
             failures.append(f"{prefix}: detection group incomplete on one side")
             continue
-        prefix_rtol = max([rtol] + [v for k, v in RTOL_OVERRIDES.items() if prefix.startswith(k)])
-        problem, ratio = match_detections(prefix, a, b, prefix_rtol, atol)
+        prefix_rtol = max([rtol] + [v for k, v in rtol_overrides.items() if prefix.startswith(k)])
+        problem, ratio, swaps = match_detections(prefix, a, b, prefix_rtol, atol)
         if problem:
             failures.append(problem)
+        elif swaps:
+            notes.append(f"{prefix}: {swaps} NMS-equivalent swap(s) accepted")
         if ratio > worst:
             worst, worst_key = ratio, prefix
     for key in keys:
@@ -452,10 +509,12 @@ def compare(path_a, path_b, atol, rtol):
             ratio = diff / scale if scale > 0 else float("inf")
             if ratio > worst:
                 worst, worst_key = ratio, key
-            key_rtol = max([rtol] + [v for k, v in RTOL_OVERRIDES.items() if key.startswith(k)])
+            key_rtol = max([rtol] + [v for k, v in rtol_overrides.items() if key.startswith(k)])
             if diff > atol + key_rtol * scale:
                 failures.append(f"{key}: max|diff| = {diff:.3e} = {ratio:.2e} of scale {scale:.3e}")
 
+    for note in notes:
+        print(f"NOTE  {note}")
     for note in failures:
         print(f"FAIL  {note}")
     print("-" * 70)
@@ -465,7 +524,7 @@ def compare(path_a, path_b, atol, rtol):
     if failures:
         print(f"{len(failures)} of {len(keys)} artifact(s) differ")
     else:
-        print(f"DETECTOR PARITY OK ({len(keys)} artifacts)")
+        print(f"{label} PARITY OK ({len(keys)} artifacts)")
     raise SystemExit(1 if failures else 0)
 
 
