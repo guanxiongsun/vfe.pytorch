@@ -163,9 +163,11 @@ def run(impl, device):
 
         with torch.no_grad():
             cls_scores, bbox_preds = head(feats)
-        for i, (cls_score, bbox_pred) in enumerate(zip(cls_scores, bbox_preds)):
-            out[f"{name}/cls{i}"] = cls_score.cpu()
-            out[f"{name}/reg{i}"] = bbox_pred.cpu()
+        # Indexed rather than zip(): this runs under py3.8 too, which has no
+        # zip(strict=), and ruff's B905 rightly flags a bare zip.
+        for i in range(len(cls_scores)):
+            out[f"{name}/cls{i}"] = cls_scores[i].cpu()
+            out[f"{name}/reg{i}"] = bbox_preds[i].cpu()
 
         # ---- get_bboxes ---------------------------------------------------
         with torch.no_grad():
@@ -211,27 +213,43 @@ def run(impl, device):
         # ---- targets, checked directly ------------------------------------
         # The loss is a scalar and can hide a compensating pair of errors in
         # assignment; the label/weight tensors cannot.
+        #
+        # Twice: MAMBA trains with allowed_border=0 (anchors crossing the image
+        # edge are ignored), STPN with allowed_border=-1 (they are kept), which
+        # is a separate branch of anchor_inside_flags.
+        border_head = build_head(dict(head_cfg, train_cfg=ConfigDict(dict(TRAIN_CFG,
+                                      allowed_border=-1)), test_cfg=ConfigDict(TEST_CFG)))
+        border_head.load_state_dict(seeded_state_dict(border_head, seed))
+        border_head = border_head.to(device).train()
+
+        gt0 = [torch.tensor(GT_BBOXES[0], dtype=torch.float32, device=device)]
         featmap_sizes = [f.shape[-2:] for f in feats]
-        anchor_list, valid_flag_list = train_head.get_anchors(
-            featmap_sizes, img_metas, device=device
-        )
-        torch.manual_seed(seed)
-        targets = train_head.get_targets(
-            anchor_list,
-            valid_flag_list,
-            [torch.tensor(GT_BBOXES[0], dtype=torch.float32, device=device)],
-            img_metas,
-            gt_labels_list=None,
-            label_channels=1,
-        )
-        labels, label_weights, bbox_targets, bbox_weights, num_pos, num_neg = targets
-        for i in range(len(labels)):
-            out[f"{name}/tgt/labels{i}"] = labels[i].cpu()
-            out[f"{name}/tgt/label_weights{i}"] = label_weights[i].cpu()
-            out[f"{name}/tgt/bbox_targets{i}"] = bbox_targets[i].cpu()
-            out[f"{name}/tgt/bbox_weights{i}"] = bbox_weights[i].cpu()
-        out[f"{name}/tgt/num_pos"] = torch.tensor(num_pos)
-        out[f"{name}/tgt/num_neg"] = torch.tensor(num_neg)
+        for tag, head in [("tgt", train_head), ("border", border_head)]:
+            if tag == "border":
+                cls_scores, bbox_preds = head(feats)
+                torch.manual_seed(seed)
+                losses = head.loss(cls_scores, bbox_preds, gt0, img_metas)
+                for key in sorted(losses):
+                    for i, value in enumerate(losses[key]):
+                        out[f"{name}/border/{key}{i}"] = value.detach().float().cpu()
+
+            anchor_list, valid_flag_list = head.get_anchors(
+                featmap_sizes, img_metas, device=device
+            )
+            torch.manual_seed(seed)
+            targets = head.get_targets(
+                anchor_list, valid_flag_list, gt0, img_metas, gt_labels_list=None,
+                label_channels=1,
+            )
+            labels, label_weights, bbox_targets, bbox_weights, num_pos, num_neg = targets
+            prefix = f"{name}/tgt" if tag == "tgt" else f"{name}/border/tgt"
+            for i in range(len(labels)):
+                out[f"{prefix}/labels{i}"] = labels[i].cpu()
+                out[f"{prefix}/label_weights{i}"] = label_weights[i].cpu()
+                out[f"{prefix}/bbox_targets{i}"] = bbox_targets[i].cpu()
+                out[f"{prefix}/bbox_weights{i}"] = bbox_weights[i].cpu()
+            out[f"{prefix}/num_pos"] = torch.tensor(num_pos)
+            out[f"{prefix}/num_neg"] = torch.tensor(num_neg)
 
     print(f"RAN   {len(out)} artifacts on {device}")
     return out

@@ -25,6 +25,14 @@ from .builder import (
 from .dense_heads import AnchorHead, RPNHead
 from .losses import Accuracy, CrossEntropyLoss, L1Loss, SmoothL1Loss, accuracy
 from .necks import FPN, ChannelMapper
+from .roi_heads import (
+    BaseRoIExtractor,
+    BBoxHead,
+    ConvFCBBoxHead,
+    Shared2FCBBoxHead,
+    SingleRoIExtractor,
+    StandardRoIHead,
+)
 
 __all__ = [
     "MODELS",
@@ -55,6 +63,12 @@ __all__ = [
     "FPN",
     "AnchorHead",
     "RPNHead",
+    "BaseRoIExtractor",
+    "SingleRoIExtractor",
+    "BBoxHead",
+    "ConvFCBBoxHead",
+    "Shared2FCBBoxHead",
+    "StandardRoIHead",
     "CrossEntropyLoss",
     "SmoothL1Loss",
     "L1Loss",

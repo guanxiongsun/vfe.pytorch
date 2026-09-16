@@ -56,8 +56,14 @@ extend-exclude = [
   "configs",
   "docs",
   ".dev_scripts",
-  # Everything under tools/ except the new tools/checks/ harness.
-  "tools/*.py",
+  # Everything under tools/ except the new tools/checks/ harness. The legacy
+  # scripts are listed by name: a "tools/*.py" glob also matches
+  # tools/checks/*.py (ruff's `*` crosses `/`), which silently excluded the
+  # whole harness from linting.
+  "tools/eval.py",
+  "tools/speed_test.py",
+  "tools/test.py",
+  "tools/train.py",
   "tools/analysis_tools",
   "tools/dataset_converters",
   "tools/deployment",
