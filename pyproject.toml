@@ -49,6 +49,22 @@ include = ["vfe*"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# The legacy mmdet tree, its configs and its tools are reference material -- they
+# are read, not edited, and linting them only drowns out findings in new code.
+extend-exclude = [
+  "mmdet",
+  "configs",
+  "docs",
+  ".dev_scripts",
+  # Everything under tools/ except the new tools/checks/ harness.
+  "tools/*.py",
+  "tools/analysis_tools",
+  "tools/dataset_converters",
+  "tools/deployment",
+  "tools/misc",
+  "tools/model_converters",
+  "tools/result_converters",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
