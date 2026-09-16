@@ -18,6 +18,7 @@ from torch import nn
 __all__ = [
     "constant_init",
     "normal_init",
+    "trunc_normal_init",
     "xavier_init",
     "kaiming_init",
     "bias_init_with_prob",
@@ -38,6 +39,21 @@ def constant_init(module: nn.Module, val: float, bias: float = 0) -> None:
 def normal_init(module: nn.Module, mean: float = 0, std: float = 1, bias: float = 0) -> None:
     if hasattr(module, "weight") and module.weight is not None:
         nn.init.normal_(module.weight, mean, std)
+    _init_bias(module, bias)
+
+
+def trunc_normal_init(
+    module: nn.Module,
+    mean: float = 0,
+    std: float = 1,
+    a: float = -2,
+    b: float = 2,
+    bias: float = 0,
+) -> None:
+    """Truncated normal init, as Swin uses. ``nn.init.trunc_normal_`` is the
+    same erfinv-based algorithm mmcv vendored, so values match."""
+    if hasattr(module, "weight") and module.weight is not None:
+        nn.init.trunc_normal_(module.weight, mean, std, a, b)
     _init_bias(module, bias)
 
 

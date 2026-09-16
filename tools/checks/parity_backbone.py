@@ -53,6 +53,24 @@ R50_PLAIN = dict(
     norm_cfg=dict(type="BN", requires_grad=True), norm_eval=True, style="pytorch",
 )
 
+# Swin-T, as the STPN configs configure it (minus the prompt tokens).
+SWIN_T = dict(
+    type="SwinTransformer",
+    embed_dims=96,
+    depths=[2, 2, 6, 2],
+    num_heads=[3, 6, 12, 24],
+    window_size=7,
+    mlp_ratio=4,
+    qkv_bias=True,
+    qk_scale=None,
+    drop_rate=0.0,
+    attn_drop_rate=0.0,
+    drop_path_rate=0.2,
+    patch_norm=True,
+    with_cp=False,
+    convert_weights=True,
+)
+
 CHANNEL_MAPPER = dict(type="ChannelMapper", in_channels=[2048], out_channels=512, kernel_size=3)
 FPN_SWIN = dict(type="FPN", in_channels=[96, 192, 384, 768], out_channels=256, num_outs=5)
 
@@ -65,7 +83,18 @@ CASES = [
     ("r50_dc5", R50_DC5, None, False),
     ("r50_plain", R50_PLAIN, None, False),
     ("fpn_swin_shapes", None, FPN_SWIN, False),
+    ("swin_t", SWIN_T, None, False),
+    ("swin_t+fpn", SWIN_T, FPN_SWIN, False),
+    # drop_path_rate=0 because DropPath draws from the global RNG in train
+    # mode, which no seeding can align across two torch versions. What this
+    # case checks is `_freeze_stages` -- recorded as the frozen-parameter list
+    # below, not as output values.
+    ("swin_t/frozen", dict(SWIN_T, drop_path_rate=0.0, frozen_stages=2), None, True),
 ]
+
+# 224x400 is deliberately not a multiple of the window size at every stage, so
+# ShiftWindowMSA's padding path is exercised.
+IMAGE_SHAPE = (1, 3, 224, 400)
 
 # Shapes the Swin-T + FPN case is fed directly, since Swin is not ported yet.
 FPN_INPUT_SHAPES = [(1, 96, 152, 100), (1, 192, 76, 50), (1, 384, 38, 25), (1, 768, 19, 13)]
@@ -125,10 +154,19 @@ def run(impl, device):
             module.to(device)
             module.train(train_mode)
             entry[f"{tag}_keys"] = sorted(sd)
+            # Which parameters `frozen_stages` actually froze, and which
+            # submodules it forced out of train mode -- both are structural, so
+            # they are compared as sets rather than numerically.
+            entry[f"{tag}_frozen"] = sorted(
+                n for n, p in module.named_parameters() if not p.requires_grad
+            )
+            entry[f"{tag}_eval_modules"] = sorted(
+                n for n, m in module.named_modules() if n and not m.training
+            )
 
         with torch.no_grad():
             if bb_cfg is not None:
-                feats = dict(modules)["backbone"](make_input((1, 3, 224, 400), 11).to(device))
+                feats = dict(modules)["backbone"](make_input(IMAGE_SHAPE, 11).to(device))
             else:
                 feats = tuple(
                     make_input(shape, 12 + i).to(device)
@@ -162,7 +200,7 @@ def compare(path_a, path_b, atol, rtol):
             if va is None or vb is None:
                 ok = False
                 notes.append(f"{key}: only in {'A' if vb is None else 'B'}")
-            elif key.endswith("_keys"):
+            elif key.endswith(("_keys", "_frozen", "_eval_modules")):
                 only_a, only_b = sorted(set(va) - set(vb)), sorted(set(vb) - set(va))
                 if only_a or only_b:
                     ok = False

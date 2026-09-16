@@ -1,6 +1,6 @@
 """Model components. Importing this package populates the registries."""
 
-from .backbones import BasicBlock, Bottleneck, ResLayer, ResNet
+from .backbones import BasicBlock, Bottleneck, ResLayer, ResNet, SwinTransformer
 from .builder import (
     AGGREGATORS,
     BACKBONES,
@@ -48,6 +48,7 @@ __all__ = [
     "ResLayer",
     "BasicBlock",
     "Bottleneck",
+    "SwinTransformer",
     "ChannelMapper",
     "FPN",
 ]
