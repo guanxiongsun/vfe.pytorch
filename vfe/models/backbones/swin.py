@@ -20,6 +20,7 @@ from ...layers import build_norm_layer, constant_init, trunc_normal_init
 from ...layers.drop import build_dropout
 from ...layers.transformer import FFN, PatchEmbed, PatchMerging, to_2tuple
 from ..builder import BACKBONES
+from ..checkpoint import _extract_state_dict, _read_checkpoint, load_state_dict
 
 __all__ = [
     "SwinTransformer",
@@ -498,8 +499,6 @@ class SwinTransformer(nn.Module):
         if "checkpoint" not in self.init_cfg:
             raise KeyError(f"{type(self).__name__} init_cfg must contain 'checkpoint'")
 
-        from ..checkpoint import _extract_state_dict, _read_checkpoint
-
         state_dict = _extract_state_dict(_read_checkpoint(self.init_cfg["checkpoint"]))
         if self.convert_weights:
             state_dict = swin_convert(state_dict)
@@ -512,7 +511,8 @@ class SwinTransformer(nn.Module):
             state_dict = OrderedDict((k[7:], v) for k, v in state_dict.items())
 
         self._adapt_pretrained(state_dict)
-        self.load_state_dict(state_dict, strict=False)
+        # The logging loader, not nn.Module's: a partial load must be visible.
+        load_state_dict(self, state_dict, strict=False)
 
     def _adapt_pretrained(self, state_dict: OrderedDict) -> None:
         """Reshape/interpolate the shape-dependent entries in place.

@@ -12,9 +12,9 @@ stage's *first* block the previous stage's dilation. For the DC5 configs here
 (``strides=(1,2,2,1), dilations=(1,1,1,2)``) that means layer4's first block is
 dilated in mmdet but not in torchvision. This port follows mmdet.
 
-Dropped from mmdet's version: DCN, plugins, ``deep_stem``/``avg_down``
-(ResNetV1d), and the mmcv init-cfg machinery -- no config in this repo uses
-them, and weights come from checkpoints rather than from init rules.
+Dropped from mmdet's version: DCN, plugins and ``deep_stem``/``avg_down``
+(ResNetV1d) -- no config in this repo uses them. mmcv's declarative
+``init_cfg`` machinery is replaced by an explicit :meth:`ResNet.init_weights`.
 """
 
 from __future__ import annotations
@@ -24,8 +24,9 @@ import torch.utils.checkpoint as cp
 from torch import nn
 from torch.nn.modules.batchnorm import _BatchNorm
 
-from ...layers import build_conv_layer, build_norm_layer
+from ...layers import build_conv_layer, build_norm_layer, constant_init, kaiming_init
 from ..builder import BACKBONES
+from ..checkpoint import load_checkpoint
 
 __all__ = ["BasicBlock", "Bottleneck", "ResLayer", "ResNet"]
 
@@ -291,8 +292,8 @@ class ResNet(nn.Module):
         self.norm_eval = norm_eval
         self.with_cp = with_cp
         self.zero_init_residual = zero_init_residual
-        # Retained so the detector can find pretrained weights; see
-        # vfe.models.checkpoint.load_pretrained.
+        # Either None (random init) or dict(type='Pretrained', checkpoint=...);
+        # acted on by init_weights, which the detector calls.
         self.init_cfg = init_cfg
 
         self.block, stage_blocks = self.arch_settings[depth]
@@ -359,6 +360,39 @@ class ResNet(nn.Module):
             if i in self.out_indices:
                 outs.append(x)
         return tuple(outs)
+
+    def init_weights(self) -> None:
+        """Load the pretrained checkpoint named by ``init_cfg``, or else apply
+        mmdet's random init.
+
+        The random scheme is mmdet's default ``init_cfg``: Kaiming-normal
+        (fan_out) on every conv, 1/0 on every norm, and -- with
+        ``zero_init_residual`` -- zeros on the last norm of each residual block,
+        so every block starts as the identity. A pretrained load skips all of
+        that, as mmcv's ``PretrainedInit`` does.
+        """
+        if self.init_cfg is not None:
+            if self.init_cfg.get("type") != "Pretrained" or "checkpoint" not in self.init_cfg:
+                raise ValueError(
+                    f"ResNet only supports init_cfg=dict(type='Pretrained', checkpoint=...), "
+                    f"got {self.init_cfg}"
+                )
+            # Non-strict, as mmcv's: torchvision's `fc.*` has no home here.
+            # Every other mismatch is logged by load_checkpoint.
+            load_checkpoint(self, self.init_cfg["checkpoint"], strict=False)
+            return
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                kaiming_init(m)
+            elif isinstance(m, (_BatchNorm, nn.GroupNorm)):
+                constant_init(m, 1)
+        if self.zero_init_residual:
+            for m in self.modules():
+                if isinstance(m, Bottleneck):
+                    constant_init(m.norm3, 0)
+                elif isinstance(m, BasicBlock):
+                    constant_init(m.norm2, 0)
 
     def train(self, mode: bool = True):
         super().train(mode)

@@ -23,6 +23,7 @@ from .builder import (
     build_shared_head,
 )
 from .dense_heads import AnchorHead, RPNHead
+from .detectors import BaseDetector, FasterRCNN, TwoStageDetector, parse_losses
 from .losses import Accuracy, CrossEntropyLoss, L1Loss, SmoothL1Loss, accuracy
 from .necks import FPN, ChannelMapper
 from .roi_heads import (
@@ -63,6 +64,10 @@ __all__ = [
     "FPN",
     "AnchorHead",
     "RPNHead",
+    "BaseDetector",
+    "TwoStageDetector",
+    "FasterRCNN",
+    "parse_losses",
     "BaseRoIExtractor",
     "SingleRoIExtractor",
     "BBoxHead",
