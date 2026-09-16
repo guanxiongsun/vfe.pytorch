@@ -11,6 +11,42 @@ to a **pure-PyTorch** implementation. Update the checkboxes and the Progress Log
 - **Method:** port bottom-up; after each module, feed identical inputs through original (`vfe`) and
   new (`vfe-torch`) and diff the tensors before moving on.
 
+## Status at a glance (audit, 2026-09-16)
+
+- **MAMBA's model code is complete and verified.** A from-scratch rerun of every harness (config + 8 harnesses, both envs, CPU and CUDA) passed **17/17**. The **released `epoch_6_model.pth` loads with 0 missing / 0 unexpected keys** and matches the legacy code on a 3-frame CPU video, largest difference 2.7e-6. Caveat: the synthetic frames produced only low-confidence detections.
+- **No mmlab code at runtime:** after building MAMBA, no `mmcv`/`mmdet`/`mmengine` module is loaded. `mmdet` in the new env resolves only to the in-repo legacy tree, and `mmcv` is absent, so a stray import fails loudly.
+- **Verified only partially:** backward through backbone and neck at model level (only head-level gradients so far); Swin in train mode (DropPath); anything on real images; the full model on Isambard (only ops were cross-checked there).
+- **Not started:** data pipeline, evaluator, training loop, STPN.
+
+## Reproduction facts (from the original training logs)
+
+Source: `guanxiongsun/vfe.pytorch` on Hugging Face, `work_dirs/{mamba_r101_dc5_6x,stpn_swint_adam_9x}/`: logs, dumped configs, checkpoints.
+
+| | MAMBA r101-dc5 6x | STPN Swin-T 9x |
+|---|---|---|
+| Hardware | 8× A100-40GB, DDP (NCCL), 1 image/GPU → batch 8 | same |
+| Iterations/epoch | 13,711 (VID train frames + DET 30-class subset) | same |
+| Optimiser | SGD lr 1e-3, momentum 0.9, wd 1e-4, grad clip 35 (L2) | AdamW lr 2.5e-5, betas (0.9, 0.999), wd 0.05 with `decay_mult=0` for `norm`, `relative_position_bias_table`, `absolute_pos_embed`; no clip |
+| LR schedule | linear warmup 500 iters (ratio 1/3); ×0.1 after epoch 4; 6 epochs | warmup 500; ×0.1 after epoch 6; 9 epochs |
+| Precision | fp32 (no fp16 anywhere) | fp32 |
+| Speed | 0.165 s/iter ≈ 38 min/epoch; full val eval ≈ 20 min on 8 GPUs | 0.168 s/iter |
+| Result (AP50; fast / medium / slow) | **83.82** (65.3 / 83.8 / 89.5); per epoch 82.0 → 83.6 → 83.8 | **85.15** (64.1 / 84.1 / 91.4) |
+| Caveat | **Resumed from `epoch_3.pth`**; epochs 1–3 are not in the published log. Its JSON env row says 4 GPUs and seed 1485688156, yet the resume point, 41,133 = 3 × 13,711 iterations, implies batch 8. | complete run in log |
+
+- **The evaluation protocol is itself stochastic.** VID val has 176,126 frames. Within each video the frames are shuffled with Python's `random`, *except the first*, so the memory is always seeded at `frame_id == 0` (this settles the frame-order question from 4f). At frame 0 the 14 references are spread over the *whole* video, and MAMBA's memory sampling is random, so repeated evaluations differ slightly.
+- **Data** (`guanxiongsun/imagenetvid`): VID 92.1 GB + DET 60.9 GB (split `tar.gz`), annotations 60 MB. The evaluator also needs `mmdet/datasets/mamba/vid_groundtruth_motion_iou.mat` (in repo) and `scipy`.
+
+## Rethinking the method (after Phase 4)
+
+- **What worked:** bottom-up parity caught real bugs no inference check would have: `act_cfg=None` coerced to ReLU, ResNet never loading its pretrained weights, a lint config that excluded the harnesses.
+- **What it cost:** at detector and video level, most of the effort went to *fixture* noise compounding through discrete ops (NMS, top-k, sampling), made worse by random weights (saturation, ties). Precision there is still cheap to *keep*, but expensive to *extend*.
+- **So, from here:**
+  1. Remaining model-level parity (STPN) uses **released checkpoints and real frames**, not random weights.
+  2. **Deterministic pieces are held to exact equality**, with no tolerances: data transforms (both envs ship OpenCV 4.14.0), samplers under fixed seeds, LR schedules, optimiser parameter groups.
+  3. The whole stack is judged by **task metrics**: released-checkpoint mAP on VID val, then training curves overlaid on the original logs, then reproduced mAP.
+  4. **Gradients are compared on CPU only** (see the legacy CUDA backward bug in Phase 4 notes).
+  5. Before the legacy tree is deleted, legacy outputs are **frozen as golden files**, so regressions stay detectable without the legacy env, including on Isambard.
+
 ---
 
 ## Machine / GPU
@@ -128,7 +164,7 @@ The **algorithmic core is already ~pure PyTorch** — the coupling is mostly sca
 - [x] Confirmed `torchvision.ops` provides working CUDA `nms`, `batched_nms`, `roi_align(aligned=True)`, `deform_conv2d` on **both** sm_89 and sm_90 (`tools/checks/torch_smoke.py`).
 - [x] `vfe/ops/` — mmcv-signature-compatible `nms`, `batched_nms`, `roi_align`, `RoIAlign` over `torchvision.ops`. Handles mmcv's `offset=1` (emulated by growing `x2`/`y2`), `score_threshold`, `max_num`, and `batched_nms`'s `split_thr` chunking path.
 - [x] **Parity verified bit-exact vs compiled `mmcv.ops`** — 15 cases (incl. rpn iou=0.7, dense boxes, 30-class batched, agnostic, split path, sampling_ratio 0/2, aligned/unaligned) on **both CPU and CUDA**. `soft_nms`/`max` pooling deliberately not ported: no config uses them, and `vfe/ops` raises rather than silently differing.
-- [ ] Swap `mmdet` call sites over as each module is ported (happens per-phase, not up front).
+- [x] ~~Swap `mmdet` call sites over as each module is ported.~~ Not applicable: `vfe/` is a separate package and nothing under `mmdet/` is modified.
 
 ### Parity harness (the method for everything below)
 
@@ -161,7 +197,7 @@ conda run -n vfe-torch --no-capture-output python tools/checks/parity_ops.py --c
 - [x] Port ResNet-101-DC5 (dilated C5) and Swin-T backbones — `vfe/models/backbones/{resnet,swin}.py`, plus `vfe/models/builder.py` (registries aliased to one `MODELS` registry, as mmdet does) and `vfe/layers/{weight_init,drop,transformer}.py`.
 - [x] Port FPN neck + `ChannelMapper` — `vfe/models/necks/`.
 - [x] Checkpoint loading — `vfe/models/checkpoint.py`: `load_checkpoint`/`load_state_dict`, `torchvision://` URI resolution (verified byte-identical URLs vs old mmcv), `swin_convert` for the released Swin weights. Partial loads are *logged*, never silent.
-- [x] Parity: `tools/checks/parity_backbone.py`, 9 cases. **All pass on CPU and CUDA.** The 6 ResNet/FPN cases are bit-exact (`--atol 0 --rtol 0`) on CPU and still bit-exact on CUDA at 1e-6; Swin differs by ≤1.8e-6 absolute on ~1.0 scale; FPN on CUDA ~2.6e-6 relative.
+- [x] Parity: `tools/checks/parity_backbone.py`, 9 cases. **All pass on CPU and CUDA.** The 6 ResNet/FPN cases are bit-exact (`--atol 0 --rtol 0`) on CPU and within 1e-6 on CUDA; Swin differs by ≤1.8e-6 absolute on ~1.0 scale; FPN on CUDA ~2.6e-6 relative.
 - [ ] **Deferred:** `STPNSwinTransformer` (prompted Swin, `mmdet/models/backbones/sptn_swin.py`, ~1019 lines) — only STPN needs it, and MAMBA (ResNet-101-DC5 + ChannelMapper, already verified) is the first reproduction target. Port before Phase 7's STPN run.
 
 Two things the harness caught that are worth remembering:
@@ -172,8 +208,8 @@ Two divergences that forced reimplementation rather than wrapping:
 - **mmdet vs torchvision dilation.** mmdet's `ResLayer` passes `dilation` to *every* block in a stage; torchvision gives a dilated stage's first block `previous_dilation`. For DC5 that makes `layer4.0` dilated in mmdet but not in torchvision. (Key naming still matches torchvision exactly — loading `torchvision://resnet101` leaves only `fc.*` unexpected, zero missing.)
 - **mmdet's Swin ≠ upstream Microsoft Swin.** mmdet merges patches with `nn.Unfold` (row-major 2×2) vs upstream's (TL, BL, TR, BR) gather, hence `swin_convert`'s 4-group `[0, 2, 1, 3]` permutation. mmcv's `FFN` also nests each hidden block in its own `Sequential` (`ffn.layers.0.0.*`) — flattening it breaks the released checkpoints.
 
-### Phase 4 — Detector heads + VID modules
-MAMBA first: it is the primary reproduction target and its backbone/neck are already verified.
+### Phase 4 — Detector heads + VID modules ✅ DONE for MAMBA (2026-09-16)
+MAMBA first: it is the primary reproduction target and its backbone/neck are already verified. STPN moved to Phase 7 of the revised roadmap; SELSA dropped.
 - [x] **4a** Anchor generator, `DeltaXYWHBBoxCoder`, `MaxIoUAssigner`/`RandomSampler`, bbox transforms, `multiclass_nms` — `vfe/core/`. Parity: `tools/checks/parity_core.py`, **118 artifacts bit-exact** (`--atol 0 --rtol 0`) on CPU *and* CUDA.
 - [x] **4b** `CrossEntropyLoss` (softmax + sigmoid), `SmoothL1Loss`, `L1Loss`, `accuracy` — `vfe/models/losses/`. Parity: `tools/checks/parity_losses.py`, **45 artifacts**, CPU and CUDA.
 - [x] **4c** RPN head (`AnchorHead` + `RPNHead`) — `vfe/models/dense_heads/`. Parity: `tools/checks/parity_rpn.py`, **120 artifacts** covering forward, `get_bboxes` (both the single-level DC5 and five-level FPN anchor layouts) and `loss`/`get_targets` under both `allowed_border=0` (MAMBA) and `-1` (STPN). CUDA: everything bit-exact bar the classification losses at ≤6e-8. CPU: the only non-exact artifacts are downstream of a torch CPU conv difference on the 10×7 feature map (see below).
@@ -181,48 +217,73 @@ MAMBA first: it is the primary reproduction target and its backbone/neck are alr
 - [x] **4e** `BaseDetector` / `TwoStageDetector` / `FasterRCNN` + `parse_losses` — `vfe/models/detectors/`. Parity: `tools/checks/parity_detector.py`, ~800 artifacts on detectors built from the **real MAMBA and STPN configs** through each side's own config loader (so cfg routing is under test): `init_weights()` results, `forward_train` losses + `parse_losses` (CPU), and `simple_test` proposals/detections. **Passes on CPU and CUDA.** DC5 is bit-exact through backbone, neck and RPN; the rest sits on the MKL/cuDNN noise floor. Also fixed two Phase 3 gaps it exposed: **vfe `ResNet` had no `init_weights`**, so `init_cfg=Pretrained('torchvision://resnet101')` was silently ignored and MAMBA would have trained from random weights; and Swin's pretrained load bypassed the logging loader.
 - [x] **4f** MAMBA — `vfe/models/{memory,aggregators}.py`, `vfe/models/roi_heads/mamba.py` (`MambaBBoxHead`, `MambaRoIHead`), `vfe/models/vid/` (`BaseVideoDetector`, `MAMBA`). Parity: `tools/checks/parity_mamba.py`, **~650 artifacts, passes on CPU and CUDA**: memory bank bit-exact through every branch, including random sample/replace; aggregator forward and CPU gradients; `init_weights()` on the real config (the aggregators keep torch's default `nn.Linear` init because mmcv's init recursion never reaches them, and the check pins that); `forward_train` losses; and 4-frame `simple_test` videos in adaptive-stride, small-memory and fixed-stride modes, with memory state carried across calls.
   - Behaviour kept from the original but worth knowing: at test time the memory stores **pre-ReLU** features; fixed-stride mode writes the current frame into the window's centre slot *in place*, so it persists; memory reads/writes draw from the global **CPU** RNG. One deliberate change: sampling an empty memory raises a clear error instead of returning `[]` and failing obscurely inside the aggregator.
-  - **Phase 5 must answer:** the test config sets `shuffle_video_frames=True`, but MAMBA's memory is only seeded on `frame_id == 0`. If a shuffled video doesn't start with frame 0, the memory is either stale (from the previous video) or empty (now an error). Check how the original dataset orders frames before porting it.
-- [ ] STPN + DVP predictor.
-- [ ] SELSA (baseline) if useful for cross-checking.
+  - ~~Phase 5 must answer: does `shuffle_video_frames=True` break MAMBA's memory seeding?~~ **Answered in the audit:** the dataset shuffles every frame *except the first*, so each video still starts at `frame_id == 0`.
+- [ ] ~~STPN + DVP predictor.~~ → Phase 7 of the revised roadmap.
+- [ ] ~~SELSA (baseline) if useful for cross-checking.~~ Dropped: not a reproduction target, and MAMBA is verified without it.
 
 Notes on what the parity harnesses measure, and where the noise floor sits:
 - **Bit-exactness is achievable for anything built from plain elementwise arithmetic**, and worth insisting on — all 118 core artifacts and every `smooth_l1`/`l1`/`accuracy` artifact match exactly across torch 1.10 → 2.10. Divergence is confined to the **fused kernels**: `F.cross_entropy` and `binary_cross_entropy_with_logits` differ by ≤9.5e-7 on a ~1.7e+1 scale (≈6e-8 relative, a few ULP). That is the framework, not the port, so `parity_losses.py` defaults to 1e-6 and *prints the observed difference* so a real regression stands out above the floor.
-- **A third fixture trap, found in 4c: `F.conv2d` on CPU is not version-stable at small spatial sizes.** Given bit-identical input and weights, torch 1.10 and 2.10 differ by 1.3e-6 on a 10×7 feature map while the 19×13 map above it is bit-exact — they pick different blocking below some threshold. It only shows up on FPN's top level, and only on CPU; CUDA is bit-exact throughout. Verified with a standalone `F.conv2d` probe before touching the port, which is the habit worth keeping: **reproduce the divergence outside the model first.** All three traps so far were in the harness, not the code under test.
+- **A third fixture trap, found in 4c: `F.conv2d` on CPU is not version-stable at small spatial sizes.** Given bit-identical input and weights, torch 1.10 and 2.10 differ by 1.3e-6 on a 10×7 feature map while the 19×13 map above it is bit-exact — they pick different blocking below some threshold. It only shows up on FPN's top level, and only on CPU; CUDA is bit-exact throughout. Verified with a standalone `F.conv2d` probe before touching the port, which is the habit worth keeping: **reproduce the divergence outside the model first.** All three traps found up to 4c were in the harness, not the code under test.
 - **Dense matmul on CPU is not version-stable either (found in 4d).** A bare `F.linear` on bit-identical inputs differs by ~9e-7 relative between the MKL bundled with torch 1.10 and with 2.10, at every size tried down to 64×64, and each is deterministic across thread counts. Anything downstream of an FC layer therefore sits on a ~1e-6 floor on CPU. `parity_roi_head.py` judges each artifact against **its own scale** (`max|a−b| ≤ rtol·max|a|`), because its gradients span 1e-4 to 1e+1 and no single absolute tolerance is both tight on the small ones and quiet on the large ones.
 - **The legacy oracle computes some CUDA backward passes wrong on the RTX 4060.** torch 1.10.1+cu113 predates the GPU (sm_89) and runs on it via PTX JIT. For the class-agnostic RoI head it returns `shared_fcs` gradients up to **1.3% off**, while the forward pass, the losses and the `fc_cls`/`fc_reg` gradients are all fine. How this was pinned down, since the first reading is "the port is broken": (1) each env is deterministic run to run, so it's not scatter noise; (2) a plain functional replay with no mmdet or mmcv code reproduces the error *exactly* on torch 1.10 and not on 2.10; (3) against a float64 CPU reference, the vfe gradients are right to <1e-6 and the mmdet ones are the ones that are off. Every op involved is correct in isolation, and the error comes and goes with a 1e-5 change in the inputs, so it depends on allocation history and wasn't pinned to one kernel. **Policy from here on: gradients are checked against the CPU oracle; CUDA comparisons cover forward passes, losses and targets.** This matters most for 4f, where the MAMBA aggregator is all matmuls.
 - **Detector-level parity needs three more techniques (4e), each forced by a real failure.** (1) *Initialisation is compared by distribution*: constants exactly, random tensors by robust quantiles within 8/√n. Not by moments: `trunc_normal_(std=0.02, a=-2, b=2)` occasionally emits a weight of exactly ±2, a 100σ outlier that moves the kurtosis by hundreds at random. (2) *Detections are compared as sets*: each must match one with the same label and box/score within tolerance, in any order. Scores closer than the float noise legitimately come out of NMS in either order, and on CUDA that happens in almost every run. (3) *Training parity is CPU-only* and refuses tied proposal scores, because the RoI sampler draws by position. Plus one measured, documented tolerance: STPN-style Swin detections get 1e-4, since 1.5e-6 of feature noise shifts proposal boxes ~2e-3 px and RoIAlign on random features amplifies that to ~4e-5, reproduced by noise injection in a *single* env. The comparison logic was mutation-tested: a 1-px box shift, a changed label, a missing detection, a 10× init std, normal-vs-uniform init, a flipped `requires_grad` and a 1e-9 change in a pretrained weight are all caught, and pure reordering passes.
 - **Two more comparison rules from 4f.** (1) *NMS selection flips are real and rare*: two same-class candidates overlapping above the NMS threshold, with scores equal to within float noise, survive NMS on different sides (seen once: boxes clipped to the same image corner, 1.5 px apart, scores 1e-7 apart). The set matcher accepts a detection whose partner could have suppressed it (same label, equal score, IoU ≥ 0.5), caps that at 2% of the set, and always prints a NOTE. (2) *A gradient that is zero in exact arithmetic can't be compared relatively*: the aggregator's `ref_fc_embed.bias` gradient vanishes by softmax shift-invariance, so both sides report ~1e-6 of roundoff. The harness asserts it *is* roundoff instead, which also proves the softmax runs over the right axis. Both rules were mutation-tested, and that testing caught a docstring-vs-code gap: the "exact" memory-bank artifacts had been compared with a float tolerance.
 - **Losses are compared on their gradient too, not just their value.** A loss can be numerically right and still train wrong if `weight` is applied after reduction instead of before; only `d(loss)/d(pred)` notices. Two fixture traps cost real time and are documented in the harness docstrings: `torch.softmax` drifts ~1.8e-7 between torch versions (so don't build test inputs with it), and exactly-tied NMS scores come back in either order from mmcv vs torchvision (so make the scores tie-free). Both initially looked exactly like porting bugs.
 
-### Phase 5 — Data pipeline + eval
-- [ ] ImageNet VID dataset + `Seq*` transforms as plain `Dataset`/transforms.
-- [ ] `collate_fn` replacing `DataContainer`.
-- [ ] Wire up `vid_eval.py` / COCO eval; reproduce eval numbers from released checkpoints.
+## Revised roadmap (2026-09-16, after the audit)
 
-### Phase 6 — Training loop
-- [ ] Optimizer + LR schedule (SGD for MAMBA r101; AdamW for STPN swin).
-- [ ] AMP (`torch.cuda.amp`), grad clipping, checkpoint save/resume, logging.
-- [ ] DDP launcher replacing `dist_train.sh` / `MMDistributedDataParallel`.
+Order changed from *data → training → reproduce* to **evaluation first**. A released checkpoint scoring its published mAP through the new code (M1) validates Phases 3–5 on real data in one shot, before any training compute is spent. Milestones (**M**) are the checkpoints to hold before moving on.
 
-### Phase 7 — Reproduce & finish
-- [ ] Reproduce reported metrics (targets below) from scratch or fine-tune.
-- [ ] Then tackle unfinished models: **TDViT**, **EOVOD**.
+### Phase 5 — Evaluation, then data
+- [ ] **5a VID evaluator:** `vid_eval` with fast/medium/slow motion buckets, plus the CocoVID annotation index it reads. Parity: **exact** against the legacy evaluator, on synthetic detections over the real val annotations. Needs only `annotations.tar.gz` (60 MB); adds `scipy` for the motion-IoU `.mat`.
+- [ ] **5b Test-time data path:** dataset in test mode (`test_with_adaptive_stride`, first-frame-fixed shuffle under a seeded `random`), `Seq*` test transforms, collation, per-video sharding for multi-GPU testing. Parity: **exact** on a handful of real val videos.
+- [ ] **5c Test driver**, single- and multi-GPU (replaces `tools/test.py` / `dist_test.sh`).
+- [ ] **M1:** released MAMBA checkpoint on the full VID val set, run with vfe on Isambard → **AP50 83.8**, within the protocol's own run-to-run randomness (target ±0.2).
+- [ ] **5d Train-time data path:** VID + DET concat, `bilateral_uniform` reference sampling, `SeqLoadAnnotations`, flip, format bundle, group/distributed sampler. Parity: **exact** under fixed seeds on sample videos and images.
 
-### Reproduction targets (ImageNet VID, from README)
-| Model | Backbone | AP50 | Checkpoint |
-|---|---|---|---|
-| MAMBA | ResNet-101-DC5 | 83.8 | HF: `guanxiongsun/vfe.pytorch` → `work_dirs/mamba_r101_dc5_6x` |
-| STPN  | Swin-T | 85.2 | HF: `guanxiongsun/vfe.pytorch` → `work_dirs/stpn_swint_adam_9x` |
+### Phase 6 — Training
+- [ ] **6a Optimiser construction:** SGD, and AdamW with mmcv's `paramwise_cfg.custom_keys` (`decay_mult`) semantics. Parity: **exact** parameter groups.
+- [ ] **6b LR schedule:** per-iteration linear warmup + per-epoch steps. Parity: **exact** value at every iteration.
+- [ ] **6c One full training step** (forward, backward, clip, update) on CPU, with released weights and a real batch. Parity: parameters after the step. This also closes the model-level backward gap.
+- [ ] **6d Loop:** DDP via `torchrun`/`srun`, per-epoch sampler seeding, checkpoint/resume, an mmcv-compatible JSON log (so curves overlay the originals), and an eval hook. Gradient accumulation lets one 4-GPU Isambard node reproduce batch 8 exactly (all BatchNorm is frozen, so 4×2 ≡ 8×1).
+- [ ] **M2:** short run on Isambard; loss and LR curves overlaid on the original logs.
+- [ ] **M3:** full MAMBA 6x training → **AP50 83.8** (target ±0.5, typical run-to-run variance).
+
+### Phase 7 — STPN
+- [ ] `STPNSwinTransformer` (~1.0k lines), DVP predictor, `STPN` detector (~1.3k lines total). Parity uses the released STPN checkpoint on real frames, plus Swin in train mode (DropPath) on CPU.
+- [ ] **M1′:** released STPN checkpoint → AP50 85.2. **M3′:** full 9x training.
+
+### Phase 8 — Consolidate
+- [ ] Freeze legacy harness outputs as golden files; a pytest suite that runs without the legacy env (locally, on Isambard, in CI).
+- [ ] Remove the legacy `mmdet/` tree and legacy install files; new README; `uv.lock`.
+- [ ] Isambard env: editable-install `vfe` (Phase 1b leftover), drop the stale `stash@{0}`.
+
+**Out of scope for now:** TDViT and EOVOD (no code in this repo: new model work, after M3′). **Dropped:** SELSA; fp16/AMP (neither original recipe used it; revisit only as a speed-up after M3).
+
+### Reproduction targets (ImageNet VID)
+| Model | Backbone | AP50 (published) | AP50 (original log) | Checkpoint (HF `guanxiongsun/vfe.pytorch`) |
+|---|---|---|---|---|
+| MAMBA | ResNet-101-DC5 | 83.8 | 83.82 | `work_dirs/mamba_r101_dc5_6x/epoch_6_model.pth` — loads into vfe with 0 missing/unexpected keys |
+| STPN  | Swin-T | 85.2 | 85.15 | `work_dirs/stpn_swint_adam_9x/epoch_9_model.pth` |
 
 ---
 
+## Decisions needed
+1. **Where the data lives.** Proposal: full VID + DET (153 GB compressed) on Isambard `$SCRATCH` for M1–M3, and locally only the annotations plus a few val/train videos copied back for the exact-parity checks. The local disk has 140 GB free and the legacy oracle only runs locally.
+2. **MAMBA epochs 1–3.** Is that log or setup available? Without it, M3 assumes the published config (8×1 images, lr 1e-3, from scratch).
+3. **Isambard budget:** M1 ≈ 2 GPU-hours; M3 ≈ 20 GPU-hours, plus ≈ 10 more if every epoch is evaluated as in the original; STPN similar.
+4. **Acceptance thresholds:** M1 within ±0.2 AP50, M3 within ±0.5?
+
 ## Open questions / risks
-- 8 GB VRAM vs original training batch sizes (see Machine note) — may need gradient accumulation or a bigger GPU for full training.
-- Exact weight-init & BN-eval details must match to get numerical parity — verify against `vfe` rather than assuming.
-- `DataContainer` semantics (padded collation of variable-size images/metas) — replicate carefully in the new `collate_fn`.
-- Dataset not yet downloaded locally — needed for Phase 5 eval parity (see README data-prep).
+- **Stochastic evaluation.** Shuffled frame order and random memory sampling mean eval-level parity needs Python `random` and torch's CPU RNG seeded identically, and single-process runs.
+- **Provenance of the published MAMBA run** (resumed at epoch 3; see Reproduction facts).
+- **`DataContainer` semantics** (padded collation of variable-size images and metas) must be replicated in the new collation.
+- **Library versions differ for the data path:** numpy 1.23 (legacy) vs 2.5, Pillow 10.4 vs 12.3. OpenCV is 4.14.0 in both. Exact parity in 5b/5d will show whether any of it matters.
+- **The legacy CUDA stack mis-computes some gradients on the RTX 4060.** Gradient parity stays on CPU.
+- **Checkpoint reading uses `weights_only=True`.** Fine for released `*_model.pth`; resuming a *full* mmcv training checkpoint (optimizer state, meta) may need `weights_only=False`.
 
 ## Progress log
+- **2026-09-16 (audit)** — Stopped before Phase 5 to double-check the work and rethink the plan. All harnesses rerun from scratch, 17/17 pass. The released MAMBA checkpoint loads with 0 missing/unexpected keys and matches legacy on a 3-frame video. No mmlab module is loaded at runtime. From the original training logs: 8× A100 at batch 8, SGD/AdamW recipes, no fp16, ~38 min/epoch; the published MAMBA run was resumed at epoch 3; the eval protocol is stochastic (shuffled frames, random memory). Roadmap reordered to evaluation first (M1: released checkpoint → 83.8 on VID val), STPN moved after MAMBA's reproduction, SELSA and fp16 dropped, golden-file tests planned before the legacy tree is removed. Open decisions listed under *Decisions needed*.
 - **2026-09-16 (late night)** — Phase 4f complete: MAMBA — the primary reproduction target — matches mmdet across ~650 artifacts on CPU and CUDA, including its stateful multi-frame inference. The full MAMBA model path (ResNet-101-DC5 → ChannelMapper → RPN → MAMBA RoI head with memory) is now pure PyTorch and verified. Remaining for Phase 4: STPN (+ `STPNSwinTransformer`, DVP predictor); SELSA optional. Next: Phase 5 (data pipeline + eval), which MAMBA's reproduction needs before STPN does.
 - **2026-09-16 (night)** — Phase 4e complete: `FasterRCNN` built from the real MAMBA/STPN configs matches mmdet at initialisation, in training losses and in detections, on CPU and CUDA. The most consequential find of the day came from checking `init_weights()` rather than inference: vfe's `ResNet` never loaded its ImageNet checkpoint. It is fixed now, and every inference-only parity check had passed right over it. Next: 4f, MAMBA itself.
 - **2026-09-16 (evening)** — Phases 4c + 4d complete: `RPNHead` and `StandardRoIHead` ported and verified (120 and 268 artifacts). Two findings change how parity is judged: CPU `F.linear` differs by ~9e-7 between the torch versions' MKL builds, and the **legacy torch 1.10/cu113 stack returns FC gradients up to 1.3% off on the RTX 4060** — proven against a float64 reference with a mmdet-free replay, so CUDA parity now covers forward passes only and gradients are judged on CPU. Also found that `ruff check tools/checks/` had never linted anything: the `"tools/*.py"` exclude glob matched the harness directory too. Fixed in `pyproject.toml`, and the one finding it had hidden is fixed. Next: 4e, the two-stage detector.
