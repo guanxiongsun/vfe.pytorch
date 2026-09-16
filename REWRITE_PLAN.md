@@ -55,6 +55,8 @@ Arch coverage confirmed at runtime: x86_64 wheel ships `sm_70…sm_120` (RTX 406
 - [x] Repo cloned to `~/code/vfe.pytorch`; `uv venv --python 3.12 .venv`.
 - [x] Installed the pinned stack from the cu128 index; **GPU smoke test passes** (`tools/checks/torch_smoke.py`: matmul, conv2d, bf16, autocast, nms, batched_nms, roi_align, deform_conv2d, NCCL — all OK on sm_90).
 - [x] Bootstrap script committed: `tools/isambard/setup_env.sh`.
+- [x] Repo synced via git: branch `pure-pytorch-rewrite` checked out at `~/code/vfe.pytorch`, `.venv` alongside it.
+- [ ] **Run `uv pip install --python .venv/bin/python -e ".[log,dev]"` there** — the deps are installed but the `vfe` package itself is not yet editable-installed, so scripts currently rely on `sys.path`/`PYTHONPATH`.
 - [ ] Confirm data staging path on `$SCRATCH=/scratch/b5cs/$USER`; plan ImageNet-VID transfer.
 - [ ] (Later, multi-GPU/node) `module load brics/nccl brics/aws-ofi-nccl`; launch with `srun --mpi=pmi2 --ntasks-per-node=<gpus>`, NCCL backend, `MASTER_ADDR=$(scontrol show hostname $SLURM_NODELIST | head -n1)` — see `isambard:nccl` + `isambard:slurm`.
 - [ ] *(Fallback only)* If Hopper-tuned kernels are ever needed: `apptainer build vfe.sif docker://nvcr.io/nvidia/pytorch:<arm64 tag>` (or `podman-hpc pull` + `podman-hpc migrate`), run with `--nv`/`--gpu`.
@@ -145,6 +147,15 @@ conda run -n vfe-torch --no-capture-output python tools/checks/parity_ops.py --c
 ```
 
 Inputs are generated on CPU from a fixed seed *before* any device move, so both torch versions see bit-identical data. Extend this pattern for backbones (Phase 3) and full detectors (Phase 4).
+
+Because the artifacts are portable, this also works *across machines*. The strongest check run so far compares the compiled mmcv kernels on the **RTX 4060 (sm_89, torch 1.10/cu113)** against `vfe.ops` on an **Isambard GH200 (sm_90, torch 2.10/cu128)** — all 15 cases bit-identical, i.e. the op swap is invariant to architecture *and* torch version:
+
+```bash
+ssh b5cs.aip2.isambard 'cd ~/code/vfe.pytorch && srun --account=brics.b5cs --gpus=1 --ntasks=1 --time=00:05:00 \
+    .venv/bin/python tools/checks/parity_ops.py --impl vfe --device cuda --out $HOME/ops_gh200.pt'
+ssh b5cs.aip2.isambard 'cat $HOME/ops_gh200.pt' > /tmp/ops_gh200.pt
+conda run -n vfe-torch --no-capture-output python tools/checks/parity_ops.py --compare /tmp/ops_mmcv_cu.pt /tmp/ops_gh200.pt
+```
 
 ### Phase 3 — Backbone / neck (+ checkpoint loading)
 - [ ] Port ResNet-101-DC5 (dilated C5) and Swin-T backbones.
