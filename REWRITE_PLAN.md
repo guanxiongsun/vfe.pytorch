@@ -174,12 +174,18 @@ Two divergences that forced reimplementation rather than wrapping:
 
 ### Phase 4 — Detector heads + VID modules
 MAMBA first: it is the primary reproduction target and its backbone/neck are already verified.
-- [ ] Anchor generator, `DeltaXYWHBBoxCoder`, assigner/sampler, `CrossEntropyLoss` / `SmoothL1Loss`.
-- [ ] RPN head + Standard RoI head (Shared2FCBBoxHead, SingleRoIExtractor).
-- [ ] MAMBA aggregator + MAMBA RoI head.
+- [x] **4a** Anchor generator, `DeltaXYWHBBoxCoder`, `MaxIoUAssigner`/`RandomSampler`, bbox transforms, `multiclass_nms` — `vfe/core/`. Parity: `tools/checks/parity_core.py`, **118 artifacts bit-exact** (`--atol 0 --rtol 0`) on CPU *and* CUDA.
+- [x] **4b** `CrossEntropyLoss` (softmax + sigmoid), `SmoothL1Loss`, `L1Loss`, `accuracy` — `vfe/models/losses/`. Parity: `tools/checks/parity_losses.py`, **45 artifacts**, CPU and CUDA.
+- [ ] **4c** RPN head (`AnchorHead` + `RPNHead`).
+- [ ] **4d** Standard RoI head (`SingleRoIExtractor`, `Shared2FCBBoxHead`, `StandardRoIHead`).
+- [ ] **4e** `BaseDetector` / `TwoStageDetector` / `FasterRCNN`; parity on `simple_test`.
+- [ ] **4f** MAMBA detector + aggregator + MAMBA RoI head.
 - [ ] STPN + DVP predictor.
 - [ ] SELSA (baseline) if useful for cross-checking.
-- [ ] Parity: full-model `simple_test` detections match `vfe`.
+
+Two notes on what the parity harnesses measure, and where the noise floor sits:
+- **Bit-exactness is achievable for anything built from plain elementwise arithmetic**, and worth insisting on — all 118 core artifacts and every `smooth_l1`/`l1`/`accuracy` artifact match exactly across torch 1.10 → 2.10. Divergence is confined to the **fused kernels**: `F.cross_entropy` and `binary_cross_entropy_with_logits` differ by ≤9.5e-7 on a ~1.7e+1 scale (≈6e-8 relative, a few ULP). That is the framework, not the port, so `parity_losses.py` defaults to 1e-6 and *prints the observed difference* so a real regression stands out above the floor.
+- **Losses are compared on their gradient too, not just their value.** A loss can be numerically right and still train wrong if `weight` is applied after reduction instead of before; only `d(loss)/d(pred)` notices. Two fixture traps cost real time and are documented in the harness docstrings: `torch.softmax` drifts ~1.8e-7 between torch versions (so don't build test inputs with it), and exactly-tied NMS scores come back in either order from mmcv vs torchvision (so make the scores tie-free). Both initially looked exactly like porting bugs.
 
 ### Phase 5 — Data pipeline + eval
 - [ ] ImageNet VID dataset + `Seq*` transforms as plain `Dataset`/transforms.
@@ -210,6 +216,7 @@ MAMBA first: it is the primary reproduction target and its backbone/neck are alr
 - Dataset not yet downloaded locally — needed for Phase 5 eval parity (see README data-prep).
 
 ## Progress log
+- **2026-09-16 (latest)** — Phases 4a + 4b complete. `vfe/core/` (anchors, bbox coder/assigner/sampler/transforms, `multiclass_nms`) is **bit-exact vs mmdet across 118 artifacts** on CPU and CUDA; `vfe/models/losses/` passes 45 value-and-gradient artifacts, with divergence only in the fused CE/BCE kernels (≤9.5e-7, ~6e-8 relative). Two apparent "bugs" turned out to be bad test *fixtures* — softmax drift and NMS tie ordering — both now documented in the harnesses so the next person doesn't re-derive them. Next: 4c, the RPN head.
 - **2026-09-16 (later still)** — Phase 3 complete. ResNet (incl. DC5), Swin-T, FPN, `ChannelMapper` and the checkpoint loader ported to `vfe/models/`; supporting layers in `vfe/layers/`. `tools/checks/parity_backbone.py` (9 cases) passes on CPU and CUDA, ResNet/FPN bit-exact. The harness caught a real bug (`ConvModule` coercing `act_cfg=None` to ReLU, silently breaking FPN) — the case for writing the check before trusting the port. `STPNSwinTransformer` deferred; MAMBA's backbone path is done, so Phase 4 proceeds on MAMBA first.
 - **2026-09-16 (later)** — Phases 1–2 complete. `vfe/config.py` + `vfe/registry.py` written; config loader is **bit-exact vs `mmcv.Config`** on all 4 VID configs. `vfe/ops/` written; **bit-exact vs compiled `mmcv.ops`** across 15 cases on CPU *and* CUDA. Parity-harness pattern established for the remaining phases.
 - **2026-09-16** — Versions pinned (torch 2.10.0+cu128 / torchvision 0.25.0+cu128 / py3.12); `pyproject.toml` + `vfe/` package skeleton created; legacy `setup.py`/`requirements.txt` renamed aside. Local `vfe-torch` env built and GPU-verified on RTX 4060. Phase 1b done: uv installed on Isambard, repo cloned to `~/code/vfe.pytorch`, `.venv` built, `tools/checks/torch_smoke.py` passes on a GH200 (sm_90) — all `torchvision.ops` we need work on both arches. Caught and fixed the PyPI-aarch64-is-CPU-only trap.

@@ -22,6 +22,7 @@ from .builder import (
     build_roi_extractor,
     build_shared_head,
 )
+from .losses import Accuracy, CrossEntropyLoss, L1Loss, SmoothL1Loss, accuracy
 from .necks import FPN, ChannelMapper
 
 __all__ = [
@@ -51,4 +52,9 @@ __all__ = [
     "SwinTransformer",
     "ChannelMapper",
     "FPN",
+    "CrossEntropyLoss",
+    "SmoothL1Loss",
+    "L1Loss",
+    "Accuracy",
+    "accuracy",
 ]
