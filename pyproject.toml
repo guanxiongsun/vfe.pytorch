@@ -46,6 +46,10 @@ build-backend = "setuptools.build_meta"
 # as a reference oracle but is NOT part of this distribution.
 include = ["vfe*"]
 
+[tool.setuptools.package-data]
+# The ImageNet VID val motion-IoU table the evaluator reads.
+"vfe.evaluation" = ["*.npz"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
