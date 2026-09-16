@@ -93,7 +93,7 @@ Arch coverage confirmed at runtime: x86_64 wheel ships `sm_70…sm_120` (RTX 406
 - [x] Bootstrap script committed: `tools/isambard/setup_env.sh`.
 - [x] Repo synced via git: branch `pure-pytorch-rewrite` checked out at `~/code/vfe.pytorch`, `.venv` alongside it.
 - [ ] **Run `uv pip install --python .venv/bin/python -e ".[log,dev]"` there** — the deps are installed but the `vfe` package itself is not yet editable-installed, so scripts currently rely on `sys.path`/`PYTHONPATH`.
-- [ ] Confirm data staging path on `$SCRATCH=/scratch/b5cs/$USER`; plan ImageNet-VID transfer.
+- [x] Data staging path decided: `/projects/b5cs/imagenet_vid/` (the project's shared-dataset area, rather than `$SCRATCH`); see *Data*.
 - [ ] (Later, multi-GPU/node) `module load brics/nccl brics/aws-ofi-nccl`; launch with `srun --mpi=pmi2 --ntasks-per-node=<gpus>`, NCCL backend, `MASTER_ADDR=$(scontrol show hostname $SLURM_NODELIST | head -n1)` — see `isambard:nccl` + `isambard:slurm`.
 - [ ] *(Fallback only)* If Hopper-tuned kernels are ever needed: `apptainer build vfe.sif docker://nvcr.io/nvidia/pytorch:<arm64 tag>` (or `podman-hpc pull` + `podman-hpc migrate`), run with `--nv`/`--gpu`.
 
@@ -268,11 +268,23 @@ Order changed from *data → training → reproduce* to **evaluation first**. A 
 
 ---
 
-## Decisions needed
-1. **Where the data lives.** Proposal: full VID + DET (153 GB compressed) on Isambard `$SCRATCH` for M1–M3, and locally only the annotations plus a few val/train videos copied back for the exact-parity checks. The local disk has 140 GB free and the legacy oracle only runs locally.
-2. **MAMBA epochs 1–3.** Is that log or setup available? Without it, M3 assumes the published config (8×1 images, lr 1e-3, from scratch).
-3. **Isambard budget:** M1 ≈ 2 GPU-hours; M3 ≈ 20 GPU-hours, plus ≈ 10 more if every epoch is evaluated as in the original; STPN similar.
-4. **Acceptance thresholds:** M1 within ±0.2 AP50, M3 within ±0.5?
+## Decisions (answered 2026-09-16)
+1. **Data:** the dataset lives on the local USB drive `/media/guanxiong/tony/data/` and is uploaded to Isambard for reproduction; see *Data* below.
+2. **MAMBA epochs 1–3:** no log exists. M3 assumes the published config (8×1 images, lr 1e-3, from scratch) and runs on Isambard.
+3. **Isambard budget:** approved: M1 ≈ 2 GPU-hours, M3 ≈ 20–30 GPU-hours, STPN similar.
+4. **Acceptance:** M1 within ±0.2 AP50; M3 within ±0.5.
+
+## Data
+
+**Local** (`/media/guanxiong/tony/data/`, 1.8 TB NTFS USB drive):
+- Archives, identical to Hugging Face `guanxiongsun/imagenetvid`: `ILSVRC2015_VID.tar.gz` (92.06 GB), `ILSVRC2017_DET.tar.gz.aa` + `.ab` (60.86 GB), `ILSVRC2015/annotations.tar.gz` (57 MB).
+- Extracted `ILSVRC2015/`: `Data/VID/{train,val,test,snippets}`, `Annotations/` (VID XMLs **and** the three JSONs), `ImageSets/VID`. **DET images are not extracted locally**, only archived.
+- The repo uses it in place, since the local disk (135 GB free) could not hold a copy. `data/ILSVRC/` (git-ignored) holds symlinks in the config layout: `Data/VID`, `Annotations`, `ImageSets`, and `annotations` → the drive's `Annotations/`. Works only while the drive is mounted. Phase 5d's exact-parity checks will need a few DET images, extracted from the archive when needed.
+
+**Isambard** (`/projects/b5cs/imagenet_vid/`, the project's shared-dataset area):
+- `archives/`: the four files above, uploaded with resumable `rsync` (≈25 MB/s; parallel streams don't help, the uplink is the limit).
+- `ILSVRC/`: extracted by `tools/isambard/stage_imagenet_vid.sbatch`, which (1) verifies SHA-256 against the Hugging Face checksums, proving the upload intact and identical to the HF copy, (2) merges VID and DET into the config layout, skipping `Data/VID/snippets` and the unlabelled `Data/{VID,DET}/test`, and (3) runs `tools/isambard/check_imagenet_vid.py` to confirm every image referenced by the three JSONs exists (vid_val 176,126; det_30plus1cls 349,721; vid_train). It writes `MANIFEST.txt` and `CHECK.txt` next to them.
+- **Not a backup:** Isambard storage is working storage, deleted at project end. The durable copies are the local drive and the Hugging Face dataset repo.
 
 ## Open questions / risks
 - **Stochastic evaluation.** Shuffled frame order and random memory sampling mean eval-level parity needs Python `random` and torch's CPU RNG seeded identically, and single-process runs.
@@ -283,6 +295,7 @@ Order changed from *data → training → reproduce* to **evaluation first**. A 
 - **Checkpoint reading uses `weights_only=True`.** Fine for released `*_model.pth`; resuming a *full* mmcv training checkpoint (optimizer state, meta) may need `weights_only=False`.
 
 ## Progress log
+- **2026-09-16 (data)** — Decisions answered (see above). The dataset was found on the local USB drive, archives included; they are identical in size to the Hugging Face copies. The repo reads it in place through `data/ILSVRC/` symlinks. Upload of the four archives to `/projects/b5cs/imagenet_vid/archives/` started (≈1.7 h at the uplink's ≈25 MB/s; Hugging Face → Isambard measured the same speed, so uploading costs nothing extra). Added `tools/isambard/stage_imagenet_vid.sbatch` (checksum → extract → completeness check) and `check_imagenet_vid.py`; both were tested locally, the tar exclude/strip logic on a mock archive.
 - **2026-09-16 (audit)** — Stopped before Phase 5 to double-check the work and rethink the plan. All harnesses rerun from scratch, 17/17 pass. The released MAMBA checkpoint loads with 0 missing/unexpected keys and matches legacy on a 3-frame video. No mmlab module is loaded at runtime. From the original training logs: 8× A100 at batch 8, SGD/AdamW recipes, no fp16, ~38 min/epoch; the published MAMBA run was resumed at epoch 3; the eval protocol is stochastic (shuffled frames, random memory). Roadmap reordered to evaluation first (M1: released checkpoint → 83.8 on VID val), STPN moved after MAMBA's reproduction, SELSA and fp16 dropped, golden-file tests planned before the legacy tree is removed. Open decisions listed under *Decisions needed*.
 - **2026-09-16 (late night)** — Phase 4f complete: MAMBA — the primary reproduction target — matches mmdet across ~650 artifacts on CPU and CUDA, including its stateful multi-frame inference. The full MAMBA model path (ResNet-101-DC5 → ChannelMapper → RPN → MAMBA RoI head with memory) is now pure PyTorch and verified. Remaining for Phase 4: STPN (+ `STPNSwinTransformer`, DVP predictor); SELSA optional. Next: Phase 5 (data pipeline + eval), which MAMBA's reproduction needs before STPN does.
 - **2026-09-16 (night)** — Phase 4e complete: `FasterRCNN` built from the real MAMBA/STPN configs matches mmdet at initialisation, in training losses and in detections, on CPU and CUDA. The most consequential find of the day came from checking `init_weights()` rather than inference: vfe's `ResNet` never loaded its ImageNet checkpoint. It is fixed now, and every inference-only parity check had passed right over it. Next: 4f, MAMBA itself.
