@@ -250,8 +250,8 @@ Order changed from *data → training → reproduce* to **evaluation first**. A 
 - [ ] **5d Train-time data path:** VID + DET concat, `bilateral_uniform` reference sampling, `SeqLoadAnnotations`, flip, format bundle, group/distributed sampler. Parity: **exact** under fixed seeds on sample videos and images.
 
 ### Phase 6 — Training
-- [ ] **6a Optimiser construction:** SGD, and AdamW with mmcv's `paramwise_cfg.custom_keys` (`decay_mult`) semantics. Parity: **exact** parameter groups.
-- [ ] **6b LR schedule:** per-iteration linear warmup + per-epoch steps. Parity: **exact** value at every iteration.
+- [x] **6a Optimiser construction** — `vfe/engine/optimizer.py` (mmcv `DefaultOptimizerConstructor` semantics: `custom_keys` as longest-first substring match on dotted names, plus the bias/norm/dwconv multipliers). Parameters with identical settings are merged (mmcv's 207 per-parameter groups for STPN become 3), which is equivalent for SGD/AdamW. Parity: `tools/checks/parity_optim.py`, **every parameter's effective settings exact** for MAMBA's SGD on the real MAMBA model and STPN's AdamW on the Swin-T detector.
+- [x] **6b LR schedule** — `vfe/engine/lr_scheduler.py` (mmcv `StepLrUpdaterHook`, epoch-based with iteration warmup). Parity: **all 82,266 (MAMBA 6x) and 123,399 (STPN 9x) per-iteration LRs exact**, against mmcv's real hook driven by a minimal runner. Also matches **all 2,466 LRs logged in the original STPN training run** at the log's precision.
 - [ ] **6c One full training step** (forward, backward, clip, update) on CPU, with released weights and a real batch. Parity: parameters after the step. This also closes the model-level backward gap.
 - [ ] **6d Loop:** DDP via `torchrun`/`srun`, per-epoch sampler seeding, checkpoint/resume, an mmcv-compatible JSON log (so curves overlay the originals), and an eval hook. Gradient accumulation lets one 4-GPU Isambard node reproduce batch 8 exactly (all BatchNorm is frozen, so 4×2 ≡ 8×1).
 - [ ] **M2:** short run on Isambard; loss and LR curves overlaid on the original logs.
