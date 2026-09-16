@@ -1,0 +1,79 @@
+[project]
+name = "vfe"
+version = "0.1.0"
+description = "Video Feature Enhancement: pure-PyTorch implementations of MAMBA, STPN and SELSA for video object detection"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Guanxiong Sun", email = "sungx.cs@outlook.com" }]
+
+# Hard pins: the *same* spec must resolve on x86_64 (local RTX 4060, sm_89) and
+# aarch64 (Isambard-AI GH200, sm_90). torch 2.10.0 is the newest release with
+# CUDA 12.8 wheels for BOTH arches -- 2.11+ moved to CUDA 13, which Isambard's
+# 565.57.01 driver (CUDA 12.7 native) cannot run without forward-compat shims.
+# The `+cu128` local version is required: PyPI's default aarch64 `torch` wheel
+# is CPU-only (verified on a GH200 node), so both must come from the
+# download.pytorch.org/whl/cu128 index configured under [tool.uv] below.
+dependencies = [
+  "torch==2.10.0+cu128",
+  "torchvision==0.25.0+cu128",
+  "numpy>=1.26,<3",
+  "pillow>=10",
+  "opencv-python-headless>=4.9,<5",
+  "pycocotools>=2.0.7",
+  "pyyaml>=6",
+  "terminaltables>=3.1",
+  "tqdm>=4.66",
+]
+
+[project.optional-dependencies]
+# Logging / experiment tracking; kept optional so the core install stays tiny.
+log = ["tensorboard>=2.16"]
+dev = [
+  "pytest>=8",
+  "ruff>=0.6",
+]
+
+[project.urls]
+Homepage = "https://github.com/guanxiongsun/vfe.pytorch"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+# Only the new pure-PyTorch package. The legacy `mmdet/` tree stays in the repo
+# as a reference oracle but is NOT part of this distribution.
+include = ["vfe*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501", "B008"]
+
+# ---------------------------------------------------------------------------
+# uv configuration
+# ---------------------------------------------------------------------------
+# torch/torchvision come from the CUDA 12.8 wheel index, NOT PyPI. PyPI's
+# default aarch64 wheel is `2.10.0+cpu` (confirmed on a GH200 node), so relying
+# on it would silently give a CPU-only build on Isambard. `explicit = true`
+# means only the packages mapped in [tool.uv.sources] use this index; every
+# other dependency still resolves from PyPI.
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+
+[tool.uv]
+# Keep the lockfile valid for both machines.
+environments = [
+  "sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "sys_platform == 'linux' and platform_machine == 'aarch64'",
+]
