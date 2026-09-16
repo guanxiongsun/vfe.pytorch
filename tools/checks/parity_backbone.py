@@ -96,7 +96,8 @@ CASES = [
 # ShiftWindowMSA's padding path is exercised.
 IMAGE_SHAPE = (1, 3, 224, 400)
 
-# Shapes the Swin-T + FPN case is fed directly, since Swin is not ported yet.
+# Swin-T's output shapes for IMAGE_SHAPE. Fed to FPN directly in the
+# `fpn_swin_shapes` case, so the neck is exercised independently of the backbone.
 FPN_INPUT_SHAPES = [(1, 96, 152, 100), (1, 192, 76, 50), (1, 384, 38, 25), (1, 768, 19, 13)]
 
 

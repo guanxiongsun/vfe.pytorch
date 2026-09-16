@@ -157,13 +157,24 @@ ssh b5cs.aip2.isambard 'cat $HOME/ops_gh200.pt' > /tmp/ops_gh200.pt
 conda run -n vfe-torch --no-capture-output python tools/checks/parity_ops.py --compare /tmp/ops_mmcv_cu.pt /tmp/ops_gh200.pt
 ```
 
-### Phase 3 — Backbone / neck (+ checkpoint loading)
-- [ ] Port ResNet-101-DC5 (dilated C5) and Swin-T backbones.
-- [ ] Port FPN neck.
-- [ ] Write a state_dict key mapper to load the released `.pth` checkpoints into the new modules.
-- [ ] Parity: identical images → identical backbone/neck feature maps.
+### Phase 3 — Backbone / neck (+ checkpoint loading) ✅ DONE (2026-09-16)
+- [x] Port ResNet-101-DC5 (dilated C5) and Swin-T backbones — `vfe/models/backbones/{resnet,swin}.py`, plus `vfe/models/builder.py` (registries aliased to one `MODELS` registry, as mmdet does) and `vfe/layers/{weight_init,drop,transformer}.py`.
+- [x] Port FPN neck + `ChannelMapper` — `vfe/models/necks/`.
+- [x] Checkpoint loading — `vfe/models/checkpoint.py`: `load_checkpoint`/`load_state_dict`, `torchvision://` URI resolution (verified byte-identical URLs vs old mmcv), `swin_convert` for the released Swin weights. Partial loads are *logged*, never silent.
+- [x] Parity: `tools/checks/parity_backbone.py`, 9 cases. **All pass on CPU and CUDA.** The 6 ResNet/FPN cases are bit-exact (`--atol 0 --rtol 0`) on CPU and still bit-exact on CUDA at 1e-6; Swin differs by ≤1.8e-6 absolute on ~1.0 scale; FPN on CUDA ~2.6e-6 relative.
+- [ ] **Deferred:** `STPNSwinTransformer` (prompted Swin, `mmdet/models/backbones/sptn_swin.py`, ~1019 lines) — only STPN needs it, and MAMBA (ResNet-101-DC5 + ChannelMapper, already verified) is the first reproduction target. Port before Phase 7's STPN run.
+
+Two things the harness caught that are worth remembering:
+- **`act_cfg=None` means "no activation", not "default to ReLU".** mmcv puts `dict(type='ReLU')` in the *signature*, so an explicit `None` is meaningful — FPN's lateral and output convs rely on it. `ConvModule` had been coercing `None` → ReLU, producing completely wrong FPN outputs. Fixed with a `DEFAULT_ACT_CFG` sentinel in `vfe/layers/conv_module.py`.
+- **TF32 must be off for parity.** It is on by default for convs in *both* torch 1.10 and 2.10, and its ~10-bit mantissa yields ~1e-4 relative noise — enough to hide a real porting bug. `parity_backbone.run()` disables it (plus `cudnn.benchmark`) on CUDA.
+
+Two divergences that forced reimplementation rather than wrapping:
+- **mmdet vs torchvision dilation.** mmdet's `ResLayer` passes `dilation` to *every* block in a stage; torchvision gives a dilated stage's first block `previous_dilation`. For DC5 that makes `layer4.0` dilated in mmdet but not in torchvision. (Key naming still matches torchvision exactly — loading `torchvision://resnet101` leaves only `fc.*` unexpected, zero missing.)
+- **mmdet's Swin ≠ upstream Microsoft Swin.** mmdet merges patches with `nn.Unfold` (row-major 2×2) vs upstream's (TL, BL, TR, BR) gather, hence `swin_convert`'s 4-group `[0, 2, 1, 3]` permutation. mmcv's `FFN` also nests each hidden block in its own `Sequential` (`ffn.layers.0.0.*`) — flattening it breaks the released checkpoints.
 
 ### Phase 4 — Detector heads + VID modules
+MAMBA first: it is the primary reproduction target and its backbone/neck are already verified.
+- [ ] Anchor generator, `DeltaXYWHBBoxCoder`, assigner/sampler, `CrossEntropyLoss` / `SmoothL1Loss`.
 - [ ] RPN head + Standard RoI head (Shared2FCBBoxHead, SingleRoIExtractor).
 - [ ] MAMBA aggregator + MAMBA RoI head.
 - [ ] STPN + DVP predictor.
@@ -199,6 +210,7 @@ conda run -n vfe-torch --no-capture-output python tools/checks/parity_ops.py --c
 - Dataset not yet downloaded locally — needed for Phase 5 eval parity (see README data-prep).
 
 ## Progress log
+- **2026-09-16 (later still)** — Phase 3 complete. ResNet (incl. DC5), Swin-T, FPN, `ChannelMapper` and the checkpoint loader ported to `vfe/models/`; supporting layers in `vfe/layers/`. `tools/checks/parity_backbone.py` (9 cases) passes on CPU and CUDA, ResNet/FPN bit-exact. The harness caught a real bug (`ConvModule` coercing `act_cfg=None` to ReLU, silently breaking FPN) — the case for writing the check before trusting the port. `STPNSwinTransformer` deferred; MAMBA's backbone path is done, so Phase 4 proceeds on MAMBA first.
 - **2026-09-16 (later)** — Phases 1–2 complete. `vfe/config.py` + `vfe/registry.py` written; config loader is **bit-exact vs `mmcv.Config`** on all 4 VID configs. `vfe/ops/` written; **bit-exact vs compiled `mmcv.ops`** across 15 cases on CPU *and* CUDA. Parity-harness pattern established for the remaining phases.
 - **2026-09-16** — Versions pinned (torch 2.10.0+cu128 / torchvision 0.25.0+cu128 / py3.12); `pyproject.toml` + `vfe/` package skeleton created; legacy `setup.py`/`requirements.txt` renamed aside. Local `vfe-torch` env built and GPU-verified on RTX 4060. Phase 1b done: uv installed on Isambard, repo cloned to `~/code/vfe.pytorch`, `.venv` built, `tools/checks/torch_smoke.py` passes on a GH200 (sm_90) — all `torchvision.ops` we need work on both arches. Caught and fixed the PyPI-aarch64-is-CPU-only trap.
 - **2026-09-15** — Phase 0 complete: Miniforge installed; `vfe` legacy env built & GPU-verified (MAMBA/STPN build; torch + mmcv ops run on RTX 4060 via PTX-JIT). mmlab dependency surface inventoried. Plan drafted.
