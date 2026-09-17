@@ -17,7 +17,7 @@ to a **pure-PyTorch** implementation. Update the checkboxes and the Progress Log
 - **No mmlab code at runtime:** after building MAMBA, no `mmcv`/`mmdet`/`mmengine` module is loaded. `mmdet` in the new env resolves only to the in-repo legacy tree, and `mmcv` is absent, so a stray import fails loudly.
 - **Verified only partially:** backward through backbone and neck at model level (only head-level gradients so far); Swin in train mode (DropPath); anything on real images; the full model on Isambard (only ops were cross-checked there).
 - **Not started:** data pipeline, evaluator, training loop, STPN.
-- **Since the audit:** evaluator (5a), test-time data path (5b), test driver (5c), train-time data path (5d), optimiser and LR schedule (6a/6b), training step (6c) and training loop (6d) are ported and verified against the legacy stack. **M1 passed on Isambard: the released MAMBA checkpoint scores AP50 83.80 (original 83.82).** Next: M2, a short training run on Isambard, then M3.
+- **Since the audit:** evaluator (5a), test-time data path (5b), test driver (5c), train-time data path (5d), optimiser and LR schedule (6a/6b), training step (6c) and training loop (6d) are ported and verified against the legacy stack. **M1 and M1′ passed on Isambard: the released checkpoints score AP50 83.80 (MAMBA; original 83.82) and 85.150 (STPN; original 85.152).** M2 passed; M3 (MAMBA training) is running and M3′ (STPN training) is queued. STPN's model and training pipeline (7a, 7b) are ported and verified.
 
 ## Reproduction facts (from the original training logs)
 
@@ -293,7 +293,17 @@ Order changed from *data → training → reproduce* to **evaluation first**. A 
     - **Weights are restored after each step**, so both stacks always run forward and backward on the released weights while optimiser state carries over. Otherwise AdamW's first step already leaves the stacks on slightly different weights and STPN's second step picked different RPN proposals (10% difference), a legitimate divergence rather than a porting error.
     - MAMBA under the new design: **2,521 artifacts pass** (momentum buffers ≤ 1.5e-4, updates within 0.33 spacings).
 - [x] **7b STPN training pipeline** — `vfe/datasets/pipelines/{transforms,auto_augment}.py`: `AutoAugment`, multi-scale `Resize` (`multiscale_mode="value"`), `RandomCrop`/`SeqRandomCrop` (`absolute`, `absolute_range`; independent per frame, as the STPN configs' registered class did), `SeqMaxSizePad`, `SeqResize2`. Parity: `tools/checks/parity_vid_train_data.py --config configs/vid/stpn/stpn_swint_adam_9x.py --det --extra-samples 10`: **179 artifacts bit-exact**, 21 samples covering both augmentation policies and DET images; the sampler again gives 13,711 iterations per epoch. Mutation-tested (crop offset draw order, the `absolute_range` bound, `SeqResize2` keeping the first scale).
-- [ ] **M1′:** released STPN checkpoint → AP50 85.2. **M3′:** full 9x training.
+- [x] **M1′: released STPN checkpoint on the full VID val set, vfe on Isambard → AP50 85.150** (original evaluation 85.152). Job 6625436, 4 GH200s, 24 min (35.8 frames/s per GPU), ≈1.6 GPU-hours.
+
+  | AP50 | vfe (4× GH200) | original | diff |
+  |---|---|---|---|
+  | all | 85.150 | 85.152 | −0.002 |
+  | fast | 64.061 | 64.057 | +0.004 |
+  | medium | 84.124 | 84.127 | −0.003 |
+  | slow | 91.413 | 91.414 | −0.002 |
+
+  Per-class APs differ by 0.005 on average (largest 0.023). STPN's evaluation has no random memory sampling, so the agreement is at float-noise level.
+- [ ] **M3′:** full STPN 9x training → **AP50 85.2** (target ±0.5). **Queued:** a 300-iteration smoke run (job 6625815) with the full run (job 6625816, 10 h limit, checkpoints every epoch, seed 1628124370 from the original STPN log) chained after it. Pretrained Swin-T weights are cached for the compute nodes in `/projects/b5cs/vfe/torch_home`.
 
 ### Phase 8 — Consolidate
 - [ ] Freeze legacy harness outputs as golden files; a pytest suite that runs without the legacy env (locally, on Isambard, in CI).
@@ -337,6 +347,7 @@ Order changed from *data → training → reproduce* to **evaluation first**. A 
 - **Checkpoint reading uses `weights_only=True`.** Fine for released `*_model.pth`; resuming a *full* mmcv training checkpoint (optimizer state, meta) may need `weights_only=False`.
 
 ## Progress log
+- **2026-09-17 (STPN)** — Phase 7a/7b: STPN's prompted Swin, DVP predictor and detector, and its training pipeline (AutoAugment, multi-scale resize, per-frame crops, max-size pad, second resize) are ported. Released-checkpoint inference matches legacy frame by frame (≤ 5.2e-7), training batches are bit-exact (179 artifacts), and the training step passes on real STPN batches (2,209 artifacts). **M1′ passed: the released STPN checkpoint scores AP50 85.150 through vfe (original 85.152).** The training-step harness now judges optimiser steps by state across stacks and by formula per stack, because comparing raw updates mostly measured float32 quantisation and Adam's amplification of roundoff. M3 (MAMBA 6x) is in epoch 2; M3′ (STPN 9x) is queued behind a smoke run.
 - **2026-09-17 (M1, 6d)** — Data staged on Isambard (checksums verified, nothing missing). **M1 passed: the released MAMBA checkpoint scores AP50 83.80 through vfe on 4 GH200s (original 83.82)**, and the data pipeline turned out bit-exact between aarch64 and x86. Phase 6d, the training loop, is written and verified locally: its data loaders match mmdet's real multi-worker loaders batch for batch, and gradient accumulation with per-virtual-rank generator streams makes 1 process × 2 micro-steps bit-identical to 2 DDP processes, which makes one 4-GPU node equivalent to the original 8-GPU run. Resume is bit-exact as well. 5d's DET samples are now checked too. Next: M2 on Isambard.
 - **2026-09-16 (6c)** — Full MAMBA training-step parity complete: two real batches, released weights, forward/backward, gradient clipping, SGD momentum and parameter updates; 1,899 artifacts pass. The first run also removed an accidental CUDA dependency from the legacy data harness by unwrapping the single `DataContainer` device chunk directly. The reference-proposal capture initially reported 300 vs 75 because legacy truncates the returned list in place while vfe returns a new list; recording the effective RoI-head top-75 inputs proved they agree to about 5e-8.
 - **2026-09-16 (5d)** — Train-time data path for MAMBA ported: VID + DET concatenation with training-mode filtering, annotation loading, box resize/flip, format bundle, the two group samplers and training collate. `parity_vid_train_data.py` is bit-exact on 91 artifacts, and the distributed sampler's length reproduces the logs' **13,711 iterations per epoch**. Mutation tests showed the first sample choice could not catch clipping bugs; border frames were added. Also found that mmcv's CPU `scatter` changes tensor shapes; the check now unwraps the single collated device chunk that one-GPU scatter would select. The 5b test pipeline check was rerun after the transform changes: still bit-exact.
