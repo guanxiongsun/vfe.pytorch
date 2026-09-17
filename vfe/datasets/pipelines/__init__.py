@@ -10,6 +10,7 @@ from typing import Any
 from vfe.datasets.builder import PIPELINES
 from vfe.registry import build_from_cfg
 
+from .auto_augment import AutoAugment
 from .formatting import (
     ConcatVideoReferences,
     MultiImagesToTensor,
@@ -26,12 +27,16 @@ from .loading import (
 from .transforms import (
     Normalize,
     Pad,
+    RandomCrop,
     RandomFlip,
     Resize,
+    SeqMaxSizePad,
     SeqNormalize,
     SeqPad,
+    SeqRandomCrop,
     SeqRandomFlip,
     SeqResize,
+    SeqResize2,
 )
 
 __all__ = [
@@ -42,6 +47,11 @@ __all__ = [
     "SeqLoadAnnotations",
     "Resize",
     "SeqResize",
+    "SeqResize2",
+    "RandomCrop",
+    "SeqRandomCrop",
+    "SeqMaxSizePad",
+    "AutoAugment",
     "RandomFlip",
     "SeqRandomFlip",
     "Normalize",

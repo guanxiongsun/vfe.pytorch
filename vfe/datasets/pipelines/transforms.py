@@ -2,12 +2,16 @@
 ``mmdet.datasets.pipelines.transforms`` and mmtrack's ``Seq*`` wrappers that the
 VID configs use.
 
-Ported: single-scale keep-ratio resize (image and boxes), flips, normalise and
-pad, which is everything MAMBA's train and test pipelines use. Multi-scale
-selection, masks and segmentation maps raise ``NotImplementedError``.
+Ported: keep-ratio resize at one scale or a random one of several
+(``multiscale_mode="value"``), flips, random crops, normalise and pad, plus the
+STPN-specific ``SeqResize2`` and ``SeqMaxSizePad``: everything MAMBA's and
+STPN's pipelines use. Masks, segmentation maps and the unused options raise
+``NotImplementedError``.
 
 The ``Seq*`` variants run the single-frame transform on each frame of a clip;
 with ``share_params`` every frame gets the key frame's random choices.
+Random choices draw from numpy's global generator in the original order, so a
+seeded pipeline reproduces the original samples exactly.
 """
 
 from __future__ import annotations
@@ -17,8 +21,9 @@ import numpy as np
 from vfe.datasets.builder import PIPELINES
 from vfe.datasets.pipelines.image import imnormalize, impad, impad_to_multiple, imrescale
 
-__all__ = ["Resize", "SeqResize", "RandomFlip", "SeqRandomFlip", "Normalize", "SeqNormalize",
-           "Pad", "SeqPad", "bbox_flip", "imflip"]
+__all__ = ["Resize", "SeqResize", "SeqResize2", "RandomFlip", "SeqRandomFlip", "RandomCrop",
+           "SeqRandomCrop", "Normalize", "SeqNormalize", "Pad", "SeqPad", "SeqMaxSizePad",
+           "bbox_flip", "imflip"]
 
 
 def _require_no_masks(results: dict, what: str) -> None:
@@ -37,14 +42,17 @@ class Resize:
 
     def __init__(self, img_scale=None, multiscale_mode="range", ratio_range=None,
                  keep_ratio=True, bbox_clip_border=True, backend="cv2", override=False):
-        if img_scale is None or isinstance(img_scale, list) and len(img_scale) != 1:
-            raise NotImplementedError("only a single img_scale is ported; multi-scale "
-                                      "training (STPN) comes with Phase 7")
+        if img_scale is None:
+            raise NotImplementedError("resizing without img_scale is not ported")
         if ratio_range is not None or override or not keep_ratio or backend != "cv2":
             raise NotImplementedError(
                 "ratio_range / override / keep_ratio=False / non-cv2 backends are not ported"
             )
-        self.img_scale = [img_scale] if isinstance(img_scale, tuple) else list(img_scale)
+        self.img_scale = list(img_scale) if isinstance(img_scale, list) else [img_scale]
+        if multiscale_mode not in ("value", "range"):
+            raise ValueError(f"unknown multiscale_mode {multiscale_mode!r}")
+        if len(self.img_scale) > 1 and multiscale_mode != "value":
+            raise NotImplementedError("multiscale_mode='range' is not ported")
         self.keep_ratio = keep_ratio
         self.bbox_clip_border = bbox_clip_border
 
@@ -52,8 +60,10 @@ class Resize:
         if "scale" not in results:
             if "scale_factor" in results:
                 raise NotImplementedError("resizing by a preset scale_factor is not ported")
-            results["scale"] = self.img_scale[0]
-            results["scale_idx"] = 0
+            # mmdet's random_select: one of the listed scales, uniformly.
+            scale_idx = 0 if len(self.img_scale) == 1 else np.random.randint(len(self.img_scale))
+            results["scale"] = self.img_scale[scale_idx]
+            results["scale_idx"] = scale_idx
         elif "scale_factor" in results:
             raise ValueError("scale and scale_factor cannot both be set")
 
@@ -97,6 +107,20 @@ class SeqResize(Resize):
                 scale = frame["scale"]
             outs.append(frame)
         return outs
+
+
+@PIPELINES.register_module()
+class SeqResize2(SeqResize):
+    """A second ``SeqResize`` in the same pipeline (STPN's crop policy): the
+    first resize's ``scale`` and ``scale_factor`` are dropped, so a new scale is
+    drawn and ``scale_factor`` then describes this resize alone."""
+
+    def __call__(self, results: list[dict]) -> list[dict]:
+        for frame in results:
+            if "scale" in frame:
+                frame.pop("scale")
+                frame.pop("scale_factor", None)
+        return super().__call__(results)
 
 
 def bbox_flip(bboxes: np.ndarray, img_shape: tuple, direction: str) -> np.ndarray:
@@ -173,6 +197,87 @@ class SeqRandomFlip(RandomFlip):
 
 
 @PIPELINES.register_module()
+class RandomCrop:
+    """Crop a random region: its size is ``crop_size`` (``(h, w)``, ``absolute``)
+    or drawn per side from ``[min(side, crop_size[0]), min(side, crop_size[1])]``
+    (``absolute_range``), its position uniformly. Boxes are shifted, clipped
+    (``bbox_clip_border``) and dropped with their labels when empty; with none
+    left, the sample is rejected unless ``allow_negative_crop``.
+    """
+
+    BBOX2LABEL = {"gt_bboxes": "gt_labels", "gt_bboxes_ignore": "gt_labels_ignore"}
+
+    def __init__(self, crop_size, crop_type: str = "absolute", allow_negative_crop: bool = False,
+                 recompute_bbox: bool = False, bbox_clip_border: bool = True):
+        if crop_type not in ("absolute", "absolute_range"):
+            raise NotImplementedError(f"crop_type={crop_type!r} is not ported")
+        if recompute_bbox:
+            raise NotImplementedError("recompute_bbox needs masks, which are not ported")
+        if not (crop_size[0] > 0 and crop_size[1] > 0):
+            raise ValueError(f"invalid crop_size {crop_size}")
+        if crop_type == "absolute_range" and crop_size[0] > crop_size[1]:
+            raise ValueError("absolute_range needs crop_size[0] <= crop_size[1]")
+        self.crop_size = crop_size
+        self.crop_type = crop_type
+        self.allow_negative_crop = allow_negative_crop
+        self.bbox_clip_border = bbox_clip_border
+
+    def _get_crop_size(self, image_size: tuple[int, int]) -> tuple[int, int]:
+        h, w = image_size
+        if self.crop_type == "absolute":
+            return min(self.crop_size[0], h), min(self.crop_size[1], w)
+        crop_h = np.random.randint(min(h, self.crop_size[0]), min(h, self.crop_size[1]) + 1)
+        crop_w = np.random.randint(min(w, self.crop_size[0]), min(w, self.crop_size[1]) + 1)
+        return crop_h, crop_w
+
+    def __call__(self, results: dict) -> dict | None:
+        _require_no_masks(results, "RandomCrop")
+        if "gt_instance_ids" in results:
+            raise NotImplementedError("RandomCrop does not filter gt_instance_ids")
+        crop_h, crop_w = self._get_crop_size(results["img"].shape[:2])
+        for key in results.get("img_fields", ["img"]):
+            img = results[key]
+            offset_h = np.random.randint(0, max(img.shape[0] - crop_h, 0) + 1)
+            offset_w = np.random.randint(0, max(img.shape[1] - crop_w, 0) + 1)
+            results[key] = img[offset_h:offset_h + crop_h, offset_w:offset_w + crop_w, ...]
+            img_shape = results[key].shape
+        results["img_shape"] = img_shape
+
+        for key in results.get("bbox_fields", []):
+            offset = np.array([offset_w, offset_h, offset_w, offset_h], dtype=np.float32)
+            bboxes = results[key] - offset
+            if self.bbox_clip_border:
+                bboxes[:, 0::2] = np.clip(bboxes[:, 0::2], 0, img_shape[1])
+                bboxes[:, 1::2] = np.clip(bboxes[:, 1::2], 0, img_shape[0])
+            valid = (bboxes[:, 2] > bboxes[:, 0]) & (bboxes[:, 3] > bboxes[:, 1])
+            if key == "gt_bboxes" and not valid.any() and not self.allow_negative_crop:
+                return None
+            results[key] = bboxes[valid, :]
+            label_key = self.BBOX2LABEL.get(key)
+            if label_key in results:
+                results[label_key] = results[label_key][valid]
+        return results
+
+
+@PIPELINES.register_module()
+class SeqRandomCrop(RandomCrop):
+    """``RandomCrop`` on each frame independently (size and position), as the
+    STPN configs' registered ``SeqRandomCrop`` did; ``SeqMaxSizePad`` then
+    brings the frames back to one size."""
+
+    def __init__(self, crop_size, crop_type: str = "absolute", allow_negative_crop: bool = False,
+                 recompute_bbox: bool = False, bbox_clip_border: bool = True,
+                 share_params: bool = False):
+        if share_params:
+            raise NotImplementedError("share_params=True is not ported")
+        super().__init__(crop_size, crop_type, allow_negative_crop, recompute_bbox,
+                         bbox_clip_border)
+
+    def __call__(self, results: list[dict]) -> list[dict | None]:
+        return [super(SeqRandomCrop, self).__call__(frame) for frame in results]
+
+
+@PIPELINES.register_module()
 class Normalize:
     """Adds ``img_norm_cfg``."""
 
@@ -232,3 +337,20 @@ class Pad:
 class SeqPad(Pad):
     def __call__(self, results: list[dict]) -> list[dict]:
         return [super(SeqPad, self).__call__(frame) for frame in results]
+
+
+@PIPELINES.register_module()
+class SeqMaxSizePad:
+    """Pad every frame bottom/right (with zeros) to the largest height and the
+    largest width among the clip's frames."""
+
+    def __call__(self, results: list[dict]) -> list[dict]:
+        max_h = max(frame["img"].shape[0] for frame in results)
+        max_w = max(frame["img"].shape[1] for frame in results)
+        for frame in results:
+            _require_no_masks(frame, "SeqMaxSizePad")
+            for key in frame.get("img_fields", ["img"]):
+                frame[key] = impad(frame[key], (max_h, max_w))
+            frame["pad_shape"] = frame["img"].shape
+            frame["pad_fixed_size"] = np.array([max_h, max_w])
+        return results

@@ -1,7 +1,8 @@
-"""Parity check: the MAMBA training data path, vfe vs mmdet.
+"""Parity check: the training data path, vfe vs mmdet.
 
-Builds the training set from the MAMBA config (ImageNet VID train + the DET
-30-class subset, concatenated) on each side and compares:
+Builds the training set from ``--config`` (default MAMBA; STPN's adds random
+multi-scale resizing and cropping) -- ImageNet VID train + the DET 30-class
+subset, concatenated -- on each side and compares:
 
 * ``data/*`` -- sizes and image ids of both datasets after training-mode
   filtering, and the concatenated aspect-ratio flags.
@@ -118,8 +119,8 @@ def border_frames(vid):
     return picks
 
 
-def run(impl, det):
-    dataset, batch_of, group_sampler, dist_sampler = build(impl)
+def run(impl, det, config=CONFIG, extra_samples=0):
+    dataset, batch_of, group_sampler, dist_sampler = build(impl, config=config)
     vid, det_ds = dataset.datasets
     out = {
         "data/vid/len": torch.tensor(len(vid)),
@@ -141,6 +142,7 @@ def run(impl, det):
           f"(original log: {EXPECTED_ITERS_PER_EPOCH})")
 
     picks = [0, 1, 5000, 20000, 40000, len(vid) - 1, *border_frames(vid)]
+    picks += [(i + 1) * len(vid) // (extra_samples + 1) + 7 for i in range(extra_samples)]
     if det:
         picks += [len(vid), len(vid) + 1000, len(dataset) - 1]
     for idx in picks:
@@ -159,8 +161,10 @@ def run(impl, det):
             elif not key.endswith("img_metas"):
                 for i, t in enumerate(value):
                     out[f"{tag}/{key}{i}"] = t
-        flip = batch["img_metas"][0]["flip"]
-        print(f"  {tag}: {batch['img_metas'][0]['ori_filename']}, flip={flip}")
+        meta = batch["img_metas"][0]
+        ref_shapes = sorted({tuple(m["img_shape"][:2]) for m in batch["ref_img_metas"][0]})
+        print(f"  {tag}: {meta['ori_filename']}, flip={meta['flip']}, img_shape "
+              f"{tuple(meta['img_shape'][:2])}, refs {ref_shapes}, pad {tuple(meta['pad_shape'][:2])}")
     return out
 
 
@@ -169,13 +173,16 @@ if __name__ == "__main__":
     ap.add_argument("--impl", choices=["mmdet", "vfe"])
     ap.add_argument("--out")
     ap.add_argument("--det", action="store_true", help="also compare DET samples (needs images)")
+    ap.add_argument("--config", default=str(CONFIG))
+    ap.add_argument("--extra-samples", type=int, default=0,
+                    help="more VID samples, evenly spaced (to exercise random policies)")
     ap.add_argument("--compare", nargs=2, metavar=("A", "B"))
     args = ap.parse_args()
     if args.compare:
         pp.compare(*args.compare, label="VID TRAIN DATA",
                    expect={"sampler/len": EXPECTED_ITERS_PER_EPOCH})
     elif args.impl and args.out:
-        torch.save(run(args.impl, args.det), args.out)
+        torch.save(run(args.impl, args.det, args.config, args.extra_samples), args.out)
         print(f"saved -> {args.out}")
     else:
         ap.error("pass either --impl/--out or --compare")

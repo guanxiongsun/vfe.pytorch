@@ -10,9 +10,17 @@ mis-computes some gradients (see REWRITE_PLAN.md).
 A step is what mmcv's runner did per iteration: ``train_step`` (forward_train
 and parse_losses), then ``OptimizerHook``: zero_grad, backward, gradient
 clipping if the config has it (MAMBA: 35, L2; STPN: none), optimiser step
-(MAMBA: SGD; STPN: AdamW with per-parameter decay). The second step exercises
-the optimiser state and runs on the weights the first step produced. Swin's
-DropPath is active in training; its draws come from the seeded CPU generator.
+(MAMBA: SGD; STPN: AdamW with per-parameter decay). Swin's DropPath is active
+in training; its draws come from the seeded CPU generator.
+
+After each step's results are recorded the weights are restored, so every step
+runs forward and backward on the released weights on both stacks, while the
+optimiser state carries over (the second step still exercises momentum or
+moment accumulation and bias correction). Without the restore, AdamW's first
+step would already leave the stacks on slightly different weights: Adam
+normalises every element, and elements whose gradient is within the stacks'
+roundoff (sums over thousands of tokens differ by ~1e-6 absolute) take steps of
+different size or sign. STPN's second step then saw different RPN proposals.
 
 Recorded per step, under ``step<k>/``:
 
@@ -26,17 +34,20 @@ Recorded per step, under ``step<k>/``:
   clipping), ``proposals/*`` (key frame, and MAMBA's reference frames).
 * ``grad/<param>`` (before clipping), ``state/<param>.<name>`` (the optimiser's
   state tensors after the step: ``momentum_buffer``; ``exp_avg``,
-  ``exp_avg_sq``), ``update/<param>`` (the change the step made). For
-  Adam-family optimisers each element of ``update`` is weighted by
-  ``v / (v + ADAM_FLOOR**2)``, ``v`` the bias-corrected second moment: where
-  gradients are roundoff-sized, Adam divides them by their own magnitude
-  (eps = 1e-8 barely damps it), so the stacks' different roundoff yields steps
-  of different size and even sign. Seen on STPN: all of one weight's update
-  difference came from 8 of 147,456 elements with |g| < 1e-7, while its
-  gradient matched to 1.6e-6. The weight is smooth on purpose: a hard cut at the
-  floor let single elements fall on different sides of it on the two stacks. Parameters up to ``SMALL``
-  elements are saved whole; larger ones as a sketch (key suffix ``:sketch``),
-  ``[norm, 16 bins]``, where
+  ``exp_avg_sq``), ``exact/hparams/<param>`` (lr, weight decay and the rest).
+* ``residual/<param>``: on each stack, the change the step made against the
+  optimiser's formula applied to that stack's own state and hyperparameters, in
+  float64 (SGD: ``-lr * momentum_buffer``; AdamW: decoupled decay and the
+  bias-corrected moment ratio). Every element's deviation, divided by the
+  float32 spacing at the old and new value (plus 1e-6 of the step), must be at
+  most 1: exactly the rounding of an in-place float32 update. Comparing the
+  changes across stacks instead would mostly measure that rounding (a step of
+  ~1e-5 on a weight near 1 is quantised in ~1e-7 increments) and, for AdamW,
+  Adam's amplification of roundoff-sized gradients; the state is what is
+  compared across stacks.
+
+Parameters up to ``SMALL`` elements are saved whole; larger ones as a sketch
+(key suffix ``:sketch``), ``[norm, 16 bins]``, where
   each bin sums a hash-chosen subset of the elements with hash-chosen signs.
   The sketch is linear and identical on both sides, so the bins of ``a - b``
   are the difference of the bins, and their root sum of squares estimates
@@ -71,7 +82,7 @@ SAMPLES = (711, 40000)  # a downscaled, flipped frame with a box on the edge; an
 SEED = 1466607766
 SMALL = 4096
 BINS = 16
-ADAM_FLOOR = 1e-6
+HPARAMS = ("lr", "weight_decay", "momentum", "dampening", "nesterov", "betas", "eps", "amsgrad")
 
 
 T0 = time.time()
@@ -189,6 +200,41 @@ def build(impl, config, checkpoint):
     return model, optimizer, forward, clip
 
 
+def hparams(group):
+    """The optimiser settings a parameter trains with, as a float64 vector."""
+    values = []
+    for key in HPARAMS:
+        if key in group:
+            item = group[key]
+            values.extend(float(x) for x in (item if isinstance(item, (tuple, list)) else [item]))
+    return torch.tensor(values, dtype=torch.float64)
+
+
+def ulp32(x):
+    """The float32 spacing at each element of ``x``, in float64."""
+    x = x.detach().float().abs()
+    return (torch.nextafter(x, torch.full_like(x, float("inf"))) - x).double()
+
+
+def optimizer_update(param, state, group):
+    """The step's change in float64, from the state the optimiser holds after
+    the step: what PyTorch 1.10 and 2.10 both compute for SGD with momentum and
+    for AdamW (decoupled decay)."""
+    if group.get("maximize") or group.get("amsgrad") or group.get("nesterov"):
+        raise NotImplementedError("maximize / amsgrad / nesterov")
+    if "momentum_buffer" in state:
+        return -group["lr"] * state["momentum_buffer"].double()
+    if "exp_avg_sq" not in state:
+        raise NotImplementedError("only SGD with momentum and AdamW are checked")
+    beta1, beta2 = group["betas"]
+    step = float(state["step"])
+    lr, eps = group["lr"], group["eps"]
+    denom = state["exp_avg_sq"].double().sqrt() / math.sqrt(1 - beta2**step) + eps
+    new = param * (1 - lr * group["weight_decay"])
+    new = new - lr / (1 - beta1**step) * state["exp_avg"].double() / denom
+    return new - param
+
+
 def capture(obj, name, sink):
     """Wrap ``obj.name`` on the instance so each call's result is appended to ``sink``."""
     original = getattr(obj, name)
@@ -271,15 +317,18 @@ def run(impl, config, data_config, checkpoint, threads, debug_param=None):
         for name in with_grad:
             p = params[name]
             state = optimizer.state[p]
+            group = next(g for g in optimizer.param_groups if any(q is p for q in g["params"]))
+            out[f"{tag}/exact/hparams/{name}"] = hparams(group)
             for key, value in sorted(state.items()):
                 if key != "step" and isinstance(value, torch.Tensor):
                     put(out, f"{tag}/state/{name}.{key}", value)
             update = p.detach().double() - before[name].double()
-            if "exp_avg_sq" in state:
-                group = next(g for g in optimizer.param_groups if any(q is p for q in g["params"]))
-                v_hat = state["exp_avg_sq"].double() / (1 - group["betas"][1] ** float(state["step"]))
-                update = update * (v_hat / (v_hat + ADAM_FLOOR**2))
-            put(out, f"{tag}/update/{name}", update)
+            expected = optimizer_update(before[name].double(), state, group)
+            bound = ulp32(before[name]) + ulp32(p.detach()) + 1e-6 * expected.abs()
+            residual = ((update - expected).abs() / bound).max().item()
+            out[f"{tag}/residual/{name}"] = torch.tensor(residual, dtype=torch.float64)
+            with torch.no_grad():
+                p.copy_(before[name])  # the next step starts from the same weights
         if debug_param:
             out[f"{tag}/debug/after"] = params[debug_param].detach().clone()
             for key, value in optimizer.state[params[debug_param]].items():
@@ -305,7 +354,7 @@ TOLERANCES = {
     "proposals": 1e-4,
     "grad": 1e-3,
     "state": 2e-3,  # exp_avg_sq squares the gradient, doubling its relative difference
-    "update": 1e-3,
+    "residual": 1.0,  # in units of float32 spacing: two rounding steps, half a spacing each
 }
 
 
@@ -346,13 +395,20 @@ def compare(path_a, path_b):
                 failures.append(f"{key}: differs")
             continue
         kind = key.split("/")[1]
+        if kind == "residual":  # per stack, against AdamW's formula
+            rel = max(a[key].item(), b[key].item())
+            worst.setdefault(kind, []).append((rel, key.split("/", 2)[-1]))
+            if rel > TOLERANCES[kind]:
+                failures.append(f"{key}: update deviates from AdamW's formula by {rel:.3g} "
+                                "float32 spacings")
+            continue
         if a[key].shape != b[key].shape:
             failures.append(f"{key}: shape {tuple(a[key].shape)} vs {tuple(b[key].shape)}")
             continue
         name = key.split("/", 2)[-1]
         step = key.split("/")[0]
         adaptive = any(k.startswith(f"{step}/state/") and ".exp_avg" in k for k in a)
-        if adaptive and kind in ("state", "update") and "ref_fc_embed.bias" in name:
+        if adaptive and kind == "state" and "ref_fc_embed.bias" in name:
             # Adam divides this roundoff-level gradient (see below) by its own
             # magnitude, turning noise into an lr-sized step of random sign.
             roundoff_grads.append((name, 0.0))
