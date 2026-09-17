@@ -23,7 +23,7 @@ import torch
 from torch import nn
 from torch.nn.modules.batchnorm import _BatchNorm
 
-__all__ = ["build_optimizer", "paramwise_settings"]
+__all__ = ["build_optimizer", "clip_grads", "paramwise_settings"]
 
 OPTIMIZERS = {"SGD": torch.optim.SGD, "Adam": torch.optim.Adam, "AdamW": torch.optim.AdamW}
 PARAMWISE_KEYS = {"custom_keys", "bias_lr_mult", "bias_decay_mult", "norm_decay_mult",
@@ -80,6 +80,16 @@ def paramwise_settings(model: nn.Module, base_lr: float, base_wd: float | None,
 
     visit(model, "")
     return out
+
+
+def clip_grads(params, max_norm: float, norm_type: float = 2.0) -> torch.Tensor | None:
+    """mmcv ``OptimizerHook.clip_grads``: scale the gradients that exist so their
+    total norm is at most ``max_norm``. Returns the total norm before clipping,
+    or None if no parameter has a gradient."""
+    params = [p for p in params if p.requires_grad and p.grad is not None]
+    if not params:
+        return None
+    return nn.utils.clip_grad_norm_(params, max_norm=max_norm, norm_type=norm_type)
 
 
 def build_optimizer(model: nn.Module, cfg: dict[str, Any]) -> torch.optim.Optimizer:

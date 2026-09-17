@@ -11,8 +11,8 @@ Builds the training set from the MAMBA config (ImageNet VID train + the DET
   set has the original size. Also ``GroupSampler`` (one process) under a seeded
   numpy RNG.
 * ``sample<idx>/*`` -- whole training samples as ``forward_train`` receives
-  them (mmdet: ``collate`` + ``scatter`` to a GPU, so the legacy side needs
-  CUDA): structure, metas, ground truth, and
+  them (mmdet: ``collate`` then unwrap the single device chunk that scatter
+  would select): structure, metas, ground truth, and
   a digest of every image tensor. Python's ``random`` (reference sampling) and
   numpy's (flips) are seeded identically before each sample. VID samples only
   by default: DET images are not on this machine (``--det`` once they are).
@@ -62,30 +62,38 @@ def to_cpu(obj):
     return obj
 
 
-def build(impl):
+def build(impl, select=None):
+    """``select`` picks the dataset config out of ``data.train`` (default: all)."""
     if impl == "mmdet":
         patch_legacy_det_coco()
         from mmcv import Config
-        from mmcv.parallel import collate, scatter
+        from mmcv.parallel import DataContainer, collate
 
         from mmdet.datasets import build_dataset
         from mmdet.datasets.samplers import DistributedGroupSampler, GroupSampler
 
-        dataset = build_dataset(Config.fromfile(str(CONFIG)).data.train)
+        train = Config.fromfile(str(CONFIG)).data.train
+        dataset = build_dataset(select(train) if select else train)
 
         def batch_of(idx):
-            # Scatter to GPU 0 as MMDistributedDataParallel.train_step does, then
-            # copy back. mmcv's CPU path (target [-1]) would unsqueeze every
-            # tensor, a shape training never sees.
-            batch = scatter(collate([dataset[idx]], samples_per_gpu=1), [0])[0]
-            return {k: to_cpu(v) for k, v in batch.items()}
+            # collate puts one chunk per target device in DataContainer.data.
+            # With samples_per_gpu=1 there is exactly one chunk, and selecting
+            # it reproduces single-GPU scatter's shapes without requiring CUDA.
+            # mmcv's scatter-to-CPU path is not equivalent: it unsqueezes every
+            # tensor, producing shapes training never sees.
+            batch = collate([dataset[idx]], samples_per_gpu=1)
+            return {
+                key: to_cpu(value.data[0] if isinstance(value, DataContainer) else value)
+                for key, value in batch.items()
+            }
     else:
         sys.path.insert(0, str(REPO_ROOT))
         from vfe.config import Config
         from vfe.datasets import build_dataset, collate_video_train
         from vfe.datasets.samplers import DistributedGroupSampler, GroupSampler
 
-        dataset = build_dataset(Config.fromfile(str(CONFIG)).data.train)
+        train = Config.fromfile(str(CONFIG)).data.train
+        dataset = build_dataset(select(train) if select else train)
 
         def batch_of(idx):
             return collate_video_train([dataset[idx]])
