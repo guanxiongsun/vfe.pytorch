@@ -8,7 +8,8 @@ import pytest
 import torch
 from torch import nn
 
-from vfe.apis.train import RngStreams, train_step
+from vfe.apis.test import evaluation_kwargs
+from vfe.apis.train import RngStreams, rescaled_iteration, train_step
 from vfe.engine import StepLrScheduler, clip_grads
 from vfe.engine.checkpoint import resume_checkpoint, save_checkpoint
 from vfe.engine.train_log import LogBuffer
@@ -150,3 +151,17 @@ def test_resume_rejects_weights_only_checkpoints(tmp_path):
     torch.save({"state_dict": model.state_dict()}, path)
     with pytest.raises(KeyError):
         resume_checkpoint(model, path, torch.optim.SGD(model.parameters(), lr=0.1))
+
+
+def test_rescaled_iteration_matches_mmcv():
+    # The published MAMBA run: epoch 3 of a 4-GPU run resumed on 8 GPUs.
+    assert rescaled_iteration(82_266, 4, 8) == 41_133
+    assert rescaled_iteration(41_133, 8, 4) == 82_266
+    assert rescaled_iteration(1234, 8, 8) == 1234
+    assert rescaled_iteration(1234, None, 8) == 1234  # checkpoints from before the field
+
+
+def test_evaluation_kwargs_drops_hook_only_keys():
+    evaluation = {"metric": ["bbox"], "vid_style": True, "interval": 6, "gpu_collect": False,
+                  "save_best": "all", "classwise": True}
+    assert evaluation_kwargs(evaluation) == {"vid_style": True, "classwise": True}

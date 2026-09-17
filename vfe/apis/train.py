@@ -70,7 +70,7 @@ from vfe.models.checkpoint import load_checkpoint
 from vfe.models.detectors.base import parse_losses
 from vfe.utils import get_dist_info
 
-__all__ = ["RngStreams", "train_detector", "train_step"]
+__all__ = ["RngStreams", "rescaled_iteration", "train_detector", "train_step"]
 
 # mmdet's NumClassCheckHook only asserts that heads match the dataset's classes;
 # check_num_classes does the same once, up front.
@@ -168,6 +168,16 @@ class RngStreams:
                 self.cuda[stream] = torch.cuda.get_rng_state(self.device)
 
 
+def rescaled_iteration(iteration: int, saved_world: int | None, current_world: int) -> int:
+    """The resumed iteration count, as mmcv's runner computed it: an epoch holds
+    fewer iterations on more GPUs, so a checkpoint from a different (virtual)
+    GPU count is rescaled. The published MAMBA run resumed its 4-GPU epoch 3 on
+    8 GPUs this way, turning 82,266 iterations into 41,133."""
+    if not saved_world or saved_world == current_world:
+        return iteration
+    return int(iteration * saved_world / current_world)
+
+
 def train_step(model: nn.Module, batches: list[dict], optimizer: torch.optim.Optimizer,
                device: torch.device, rng: RngStreams | None = None) -> OrderedDict[str, float]:
     """Forward and backward over one iteration's micro-batches (one per virtual
@@ -223,14 +233,12 @@ def train_detector(model: nn.Module, dataset, cfg, *, work_dir: str, timestamp: 
     if resume_from:
         checkpoint = resume_checkpoint(model, resume_from, optimizer)
         start_epoch, global_iter = checkpoint["meta"]["epoch"], checkpoint["meta"]["iter"]
-        # As mmcv's runner: an epoch holds fewer iterations on more GPUs, so the
-        # iteration count is rescaled when the (virtual) GPU count changes. The
-        # published MAMBA run did this when it resumed its 4-GPU epoch 3 on 8.
         saved_world = checkpoint["meta"].get("virtual_world_size")
-        if saved_world and saved_world != world_size * accumulate:
-            global_iter = int(global_iter * saved_world / (world_size * accumulate))
+        rescaled = rescaled_iteration(global_iter, saved_world, world_size * accumulate)
+        if rescaled != global_iter:
             logger.info("the iteration number is changed due to change of GPU number "
                         "(%d -> %d)", saved_world, world_size * accumulate)
+            global_iter = rescaled
         logger.info("resumed epoch %d, iter %d from %s", start_epoch, global_iter, resume_from)
         states = checkpoint.get("rng_states")
         try:
