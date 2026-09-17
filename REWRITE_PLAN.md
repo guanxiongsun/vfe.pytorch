@@ -275,8 +275,13 @@ Order changed from *data → training → reproduce* to **evaluation first**. A 
     - 1 process × 2 micro-steps against 2 DDP processes (gloo, CPU, real VID+DET subset, 2 iterations): **all 656 weight tensors, 311 momentum buffers and every logged value bit-identical**. With the generator swap disabled, 309 tensors differ, so the test sees it.
     - Resume: 2 epochs straight through against 1 epoch, stop, `--resume-from auto`, 1 epoch: **bit-identical** weights, momentum and generator states. Beyond mmcv, checkpoints store every process's generator states (mmcv restarted them from the seed), and evaluation runs on a forked generator so it cannot shift the training streams.
     - Evaluation hook under 2-process DDP on a 3-video val subset (metric stubbed; the real one needs the full val set): sharded inference, gather, `val` log line.
-- [ ] **M2:** short run on Isambard; loss and LR curves overlaid on the original logs.
+- [x] **M2: short MAMBA run on Isambard** (job 6625045; 500 iterations, 4 GH200s × 2 micro-steps = batch 8, seed 1466607766). `tools/analyze_train_log.py` summarises a log and checks every logged LR against the schedule; on the original MAMBA log it confirms all 822 entries.
+  - **0.158 s per iteration** (the original: 0.161 s on 8 A100s), so one node replaces the original eight GPUs at the same speed; **peak memory 5,298 MiB** per GPU (original 5,302); data time ≈ 5 ms.
+  - All 10 logged LRs match the warmup schedule. Loss 1.59 → 0.58 and accuracy 89.8 → 92.8% over the 500 warmup iterations; gradient norm ≈ 5, below the clip threshold. (The original MAMBA log starts at epoch 4, so there is no early curve to overlay; M3's epochs 4–6 are compared instead.)
+  - ≈ 0.14 GPU-hours.
 - [ ] **M3:** full MAMBA 6x training → **AP50 83.8** (target ±0.5, typical run-to-run variance).
+  - **Running:** job 6625056, `tools/isambard/train.sbatch` (`NAME=mamba_r101_dc5_6x`, checkpoints every epoch via `--cfg-options checkpoint_config.interval=1`, 6 h limit, resumes automatically if resubmitted). Expected ≈ 3.6 h of training plus ≈ 20 min of evaluation, ≈ 16 GPU-hours. Output: `/projects/b5cs/vfe/work_dirs/mamba_r101_dc5_6x/`.
+  - If a job ends after the epoch-6 checkpoint but before evaluation finishes, resubmitting has nothing left to train; evaluate `epoch_6.pth` with `tools/isambard/test_video.sbatch` as in M1.
 
 ### Phase 7 — STPN
 - [ ] `STPNSwinTransformer` (~1.0k lines), DVP predictor, `STPN` detector (~1.3k lines total). Parity uses the released STPN checkpoint on real frames, plus Swin in train mode (DropPath) on CPU.
