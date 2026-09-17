@@ -28,18 +28,13 @@ import time
 import torch
 from torch.utils.data import DataLoader, Subset
 
-from vfe.apis import make_tmpdir, multi_gpu_test, single_gpu_test
+from vfe.apis import evaluation_kwargs, make_tmpdir, multi_gpu_test, single_gpu_test
 from vfe.config import Config
 from vfe.datasets import build_dataset, collate_video_test
 from vfe.datasets.samplers import DistributedVideoSampler
 from vfe.models.builder import build_model
 from vfe.models.checkpoint import load_checkpoint
 from vfe.utils import get_dist_info, init_dist
-
-# Keys of the config's `evaluation` dict that steer the training-time hook,
-# not the metric; the original test script dropped the same ones.
-HOOK_ONLY_EVAL_KEYS = ("interval", "tmpdir", "start", "gpu_collect", "save_best", "rule",
-                       "dynamic_intervals", "metric")
 
 
 def parse_args() -> argparse.Namespace:
@@ -118,8 +113,7 @@ def main() -> None:
         print(f"smoke test: {len(outputs)} frames, {n} detections; no metric on a subset")
         return
 
-    eval_kwargs = {k: v for k, v in cfg.get("evaluation", {}).items()
-                   if k not in HOOK_ONLY_EVAL_KEYS}
+    eval_kwargs = evaluation_kwargs(cfg.get("evaluation", {}))
     metric = {k: float(v) for k, v in dataset.evaluate(outputs, **eval_kwargs).items()}
     print(json.dumps(metric, indent=1))
     path = osp.join(args.work_dir, f"eval_{time.strftime('%Y%m%d_%H%M%S')}.json")

@@ -17,6 +17,7 @@ version is ~700 lines and pulls in ``addict`` plus a temp-dir import hack.
 
 from __future__ import annotations
 
+import ast
 import copy
 import importlib.util
 import sys
@@ -115,6 +116,54 @@ def _exec_py_config(path: Path) -> dict:
         sys.modules.pop(mod_name, None)
 
 
+def parse_cfg_options(pairs: list[str]) -> dict[str, Any]:
+    """``["key=value", ...]`` from the command line, parsed as mmcv's
+    ``DictAction``: ints, floats, ``true``/``false``, ``None``, ``(a, b)``
+    tuples and ``[a, b]`` or ``a,b`` lists; anything else stays a string."""
+    def parse(text: str) -> Any:
+        text = text.strip()
+        if text.lower() in ("true", "false"):
+            return text.lower() == "true"
+        bracketed = text[:1] in "([" and text[-1:] == {"(": ")", "[": "]"}[text[:1]]
+        if bracketed or ("," in text and text[:1] not in "'\""):
+            inner = text[1:-1] if bracketed else text
+            parts = _split_top_level(inner)
+            if parts is not None and (bracketed or len(parts) > 1):
+                items = [parse(t) for t in parts]
+                return tuple(items) if text.startswith("(") else items
+        try:
+            return ast.literal_eval(text)
+        except (ValueError, SyntaxError):
+            return text
+
+    options = {}
+    for pair in pairs:
+        key, sep, text = pair.partition("=")
+        if not sep:
+            raise ValueError(f"expected key=value, got {pair!r}")
+        options[key] = parse(text)
+    return options
+
+
+def _split_top_level(text: str) -> list[str] | None:
+    """Split on commas not nested inside brackets; None if brackets don't balance."""
+    parts, depth, start = [], 0, 0
+    for i, char in enumerate(text):
+        if char in "([":
+            depth += 1
+        elif char in ")]":
+            depth -= 1
+            if depth < 0:
+                return None
+        elif char == "," and depth == 0:
+            parts.append(text[start:i])
+            start = i + 1
+    if depth != 0:
+        return None
+    parts.append(text[start:])
+    return [p for p in parts if p.strip()]
+
+
 class Config:
     """A loaded config file: ``Config.fromfile(path)``."""
 
@@ -179,15 +228,24 @@ class Config:
         return self._cfg_dict.to_dict()
 
     def merge_from_dict(self, options: dict) -> None:
-        """Apply ``{'model.backbone.depth': 101}``-style dotted overrides."""
-        patch: dict = {}
+        """Apply ``{'model.backbone.depth': 101}``-style dotted overrides, as
+        mmcv's ``--cfg-options`` did: a numeric part indexes into a list
+        (``data.train.0.ann_file``), and a dict value merges into an existing
+        dict rather than replacing it."""
         for dotted, value in options.items():
-            node = patch
             *parents, leaf = dotted.split(".")
+            node = self._cfg_dict
             for part in parents:
-                node = node.setdefault(part, {})
-            node[leaf] = value
-        self._cfg_dict = merge_dicts(self._cfg_dict, patch)
+                if isinstance(node, list) and part.isdigit():
+                    node = node[int(part)]
+                else:
+                    node = node.setdefault(part, ConfigDict())
+            key = int(leaf) if isinstance(node, list) and leaf.isdigit() else leaf
+            current = node[key] if isinstance(node, list) else node.get(key)
+            if isinstance(value, dict) and isinstance(current, dict):
+                node[key] = merge_dicts(current, value)
+            else:
+                node[key] = _wrap(value)
 
     def __repr__(self) -> str:
         return f"Config (path: {self._filename}): {self._cfg_dict!r}"

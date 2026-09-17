@@ -27,8 +27,11 @@ def is_main_process() -> bool:
 
 
 def init_dist(backend: str = "nccl") -> None:
-    """Join the process group described by torchrun's environment."""
+    """Join the process group described by torchrun's environment. With NCCL,
+    each process binds to the GPU numbered by its local rank; ``gloo`` runs
+    on CPU (local tests)."""
     if "RANK" not in os.environ or "WORLD_SIZE" not in os.environ:
         raise RuntimeError("init_dist expects to run under torchrun (RANK/WORLD_SIZE unset)")
-    torch.cuda.set_device(int(os.environ.get("LOCAL_RANK", 0)))
+    if backend == "nccl":
+        torch.cuda.set_device(int(os.environ.get("LOCAL_RANK", 0)))
     dist.init_process_group(backend=backend)

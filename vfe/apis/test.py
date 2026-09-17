@@ -19,7 +19,17 @@ import torch.distributed as dist
 
 from vfe.utils import get_dist_info
 
-__all__ = ["single_gpu_test", "multi_gpu_test", "to_device"]
+__all__ = ["single_gpu_test", "multi_gpu_test", "to_device", "evaluation_kwargs", "make_tmpdir"]
+
+# Keys of a config's `evaluation` dict that steer the training-time hook, not
+# the metric; the original test script dropped the same ones.
+HOOK_ONLY_EVAL_KEYS = ("interval", "tmpdir", "start", "gpu_collect", "save_best", "rule",
+                       "dynamic_intervals", "metric", "by_epoch", "broadcast_bn_buffer")
+
+
+def evaluation_kwargs(evaluation: dict) -> dict:
+    """The keyword arguments ``dataset.evaluate`` takes from a config's ``evaluation``."""
+    return {k: v for k, v in evaluation.items() if k not in HOOK_ONLY_EVAL_KEYS}
 
 
 def to_device(batch: dict, device: torch.device) -> dict:
