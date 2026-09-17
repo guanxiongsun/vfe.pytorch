@@ -223,6 +223,14 @@ def train_detector(model: nn.Module, dataset, cfg, *, work_dir: str, timestamp: 
     if resume_from:
         checkpoint = resume_checkpoint(model, resume_from, optimizer)
         start_epoch, global_iter = checkpoint["meta"]["epoch"], checkpoint["meta"]["iter"]
+        # As mmcv's runner: an epoch holds fewer iterations on more GPUs, so the
+        # iteration count is rescaled when the (virtual) GPU count changes. The
+        # published MAMBA run did this when it resumed its 4-GPU epoch 3 on 8.
+        saved_world = checkpoint["meta"].get("virtual_world_size")
+        if saved_world and saved_world != world_size * accumulate:
+            global_iter = int(global_iter * saved_world / (world_size * accumulate))
+            logger.info("the iteration number is changed due to change of GPU number "
+                        "(%d -> %d)", saved_world, world_size * accumulate)
         logger.info("resumed epoch %d, iter %d from %s", start_epoch, global_iter, resume_from)
         states = checkpoint.get("rng_states")
         try:
@@ -303,7 +311,8 @@ def train_detector(model: nn.Module, dataset, cfg, *, work_dir: str, timestamp: 
             if rank == 0:
                 logger.info("Saving checkpoint at %d epochs", epoch_done)
                 save_checkpoint(model, osp.join(work_dir, f"epoch_{epoch_done}.pth"), optimizer,
-                                meta={**meta, "epoch": epoch_done, "iter": global_iter},
+                                meta={**meta, "epoch": epoch_done, "iter": global_iter,
+                                      "virtual_world_size": world_size * accumulate},
                                 extra={"rng_states": rng_states})
             if distributed:
                 dist.barrier()
