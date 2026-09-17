@@ -32,7 +32,7 @@ Source: `guanxiongsun/vfe.pytorch` on Hugging Face, `work_dirs/{mamba_r101_dc5_6
 | Precision | fp32 (no fp16 anywhere) | fp32 |
 | Speed | 0.165 s/iter ≈ 38 min/epoch; full val eval ≈ 20 min on 8 GPUs | 0.168 s/iter |
 | Result (AP50; fast / medium / slow) | **83.82** (65.3 / 83.8 / 89.5); per epoch 82.0 → 83.6 → 83.8 | **85.15** (64.1 / 84.1 / 91.4) |
-| Caveat | **Resumed from `epoch_3.pth`**; epochs 1–3 are not in the published log. Its JSON env row says 4 GPUs and seed 1485688156, yet the resume point, 41,133 = 3 × 13,711 iterations, implies batch 8. | complete run in log |
+| Caveat | **Resumed from `epoch_3.pth` of a 4-GPU run.** The checkpoint's saved config says `gpu_ids = range(0, 4)`, 1 image per GPU, seed 1485688156, and it was saved at iteration 82,266 (= 3 × 27,422). mmcv rescales the iteration count on resume when the GPU count changes (the log says so: *"the iteration number is changed due to change of GPU number"*), which is where 41,133 comes from. So the published model saw **epochs 1–3 at batch 4 (82,266 SGD steps at lr 1e-3)**, then epochs 4–6 at batch 8. A batch-8-throughout run (the config as published) takes half as many steps in epochs 1–3. | complete run in log |
 
 - **The evaluation protocol is itself stochastic.** VID val has 176,126 frames. Within each video the frames are shuffled with Python's `random`, *except the first*, so the memory is always seeded at `frame_id == 0` (this settles the frame-order question from 4f). At frame 0 the 14 references are spread over the *whole* video, and MAMBA's memory sampling is random, so repeated evaluations differ slightly.
 - **Data** (`guanxiongsun/imagenetvid`): VID 92.1 GB + DET 60.9 GB (split `tar.gz`), annotations 60 MB. The evaluator also needs `mmdet/datasets/mamba/vid_groundtruth_motion_iou.mat` (in repo) and `scipy`.
@@ -280,6 +280,7 @@ Order changed from *data → training → reproduce* to **evaluation first**. A 
   - All 10 logged LRs match the warmup schedule. Loss 1.59 → 0.58 and accuracy 89.8 → 92.8% over the 500 warmup iterations; gradient norm ≈ 5, below the clip threshold. (The original MAMBA log starts at epoch 4, so there is no early curve to overlay; M3's epochs 4–6 are compared instead.)
   - ≈ 0.14 GPU-hours.
 - [ ] **M3:** full MAMBA 6x training → **AP50 83.8** (target ±0.5, typical run-to-run variance).
+  - **Curves (from `tools/analyze_train_log.py --compare`):** epoch 4 mean loss 0.163 vs the original's 0.131 (+25%), epoch 5 +19%, gradient norms +28–40%; every logged LR matches the schedule. This is the expected effect of the original's batch-4 epochs 1–3 (see the Caveat under Reproduction facts): twice as many SGD steps before epoch 4. By contrast STPN's complete original log overlays M3′ within ~1% per epoch, which vouches for the shared loop, loader and schedule.
   - **Running:** job 6625056, `tools/isambard/train.sbatch` (`NAME=mamba_r101_dc5_6x`, checkpoints every epoch via `--cfg-options checkpoint_config.interval=1`, 6 h limit, resumes automatically if resubmitted). Expected ≈ 3.6 h of training plus ≈ 20 min of evaluation, ≈ 16 GPU-hours. Output: `/projects/b5cs/vfe/work_dirs/mamba_r101_dc5_6x/`.
   - If a job ends after the epoch-6 checkpoint but before evaluation finishes, resubmitting has nothing left to train; evaluate `epoch_6.pth` with `tools/isambard/test_video.sbatch` as in M1.
 
