@@ -315,6 +315,7 @@ Order changed from *data → training → reproduce* to **evaluation first**. A 
 
 ### Phase 8 — Consolidate
 - [ ] Freeze legacy harness outputs as golden files; a pytest suite that runs without the legacy env (locally, on Isambard, in CI).
+  - Started: `tests/vfe/` (`python -m pytest tests/vfe`, 32 tests in ~3 s, CPU, no data, no legacy env) covers the new infrastructure by invariants: `--cfg-options` parsing and list-index merges, sampler lengths and coverage, the virtual-rank layout and mmdet worker seeds, the LR schedule, clipping, independent and restorable random streams, checkpoint round trips, exact gradient accumulation, STPN's crop/pad/resize/AutoAugment draws, both models' parameter counts, and prompted Swin reducing exactly to plain Swin without prompts. Golden files from the legacy harnesses are still to do.
 - [ ] Remove the legacy `mmdet/` tree and legacy install files; new README; `uv.lock`.
 - [ ] Isambard env: editable-install `vfe` (Phase 1b leftover), drop the stale `stash@{0}`.
 
