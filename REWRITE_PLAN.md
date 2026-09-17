@@ -17,7 +17,7 @@ to a **pure-PyTorch** implementation. Update the checkboxes and the Progress Log
 - **No mmlab code at runtime:** after building MAMBA, no `mmcv`/`mmdet`/`mmengine` module is loaded. `mmdet` in the new env resolves only to the in-repo legacy tree, and `mmcv` is absent, so a stray import fails loudly.
 - **Verified only partially:** backward through backbone and neck at model level (only head-level gradients so far); Swin in train mode (DropPath); anything on real images; the full model on Isambard (only ops were cross-checked there).
 - **Not started:** data pipeline, evaluator, training loop, STPN.
-- **Since the audit:** evaluator (5a), test-time data path (5b), test driver (5c), train-time data path (5d), optimiser and LR schedule (6a/6b), training step (6c) and training loop (6d) are ported and verified against the legacy stack. **M1 and M1′ passed on Isambard: the released checkpoints score AP50 83.80 (MAMBA; original 83.82) and 85.150 (STPN; original 85.152).** M2 passed; M3 (MAMBA training) is running and M3′ (STPN training) is queued. STPN's model and training pipeline (7a, 7b) are ported and verified.
+- **Since the audit:** the whole pipeline is ported and verified against the legacy stack (evaluator, data paths, test driver, optimiser, LR schedule, training step, training loop, and STPN's model and training pipeline). **Inference reproduces exactly: M1 83.80 vs 83.82 (MAMBA), M1′ 85.150 vs 85.152 (STPN).** **Training reproduces the trajectories but lands ~0.6 AP50 low in both models: M3 83.16 vs 83.82, M3′ 84.54 vs 85.15.** MAMBA's gap is explained by the published model's batch-4 epochs 1–3; STPN's curves match the original within 0.6% per epoch, leaving run-to-run variance as the likely cause.
 
 ## Reproduction facts (from the original training logs)
 
@@ -311,7 +311,18 @@ Order changed from *data → training → reproduce* to **evaluation first**. A 
   | slow | 91.413 | 91.414 | −0.002 |
 
   Per-class APs differ by 0.005 on average (largest 0.023). STPN's evaluation has no random memory sampling, so the agreement is at float-noise level.
-- [ ] **M3′:** full STPN 9x training → **AP50 85.2** (target ±0.5). **Running** (job 6625816): per-epoch losses within ~1% of the original log so far; 0.28 s per iteration, so ≈9.7 h and ≈40 GPU-hours (above the ~28 estimated from MAMBA's speed; decided 2026-09-17 to let it finish). The final evaluation will not fit the 10 h limit, so `test_video.sbatch` is chained on `epoch_9.pth` (job 6627952, `SKIP_IF_EVALUATED`). Originally queued: a 300-iteration smoke run (job 6625815) with the full run (job 6625816, 10 h limit, checkpoints every epoch, seed 1628124370 from the original STPN log) chained after it. Pretrained Swin-T weights are cached for the compute nodes in `/projects/b5cs/vfe/torch_home`.
+- [ ] **M3′: full STPN 9x training → AP50 84.54, 0.61 below the original 85.15 (target ±0.5: just missed), but the training reproduced.** Job 6625816 (4 GH200s × 2 micro-steps, seed 1628124370 from the original log), 10 h and ≈40 GPU-hours at 0.281 s per iteration, 3,918 MiB; evaluation in the chained job 6627952 (23 min), since training filled the 10 h limit.
+
+  | AP50 | M3′ | original | diff |
+  |---|---|---|---|
+  | all | 84.54 | 85.15 | −0.61 |
+  | fast | 64.15 | 64.06 | +0.09 |
+  | medium | 83.58 | 84.13 | −0.55 |
+  | slow | 90.78 | 91.41 | −0.63 |
+
+  - **The curves match the original run**: per-epoch mean losses within 1.0% in epoch 1 and within 0.6% in epochs 2–9 (epoch 9: 0.1437 vs 0.1440), accuracy equal to two decimals, all 2,466 logged LRs on schedule. Unlike MAMBA, nothing about the schedule differs: this run followed the published config exactly.
+  - **The gap looks like run-to-run variance in the final weights, not a porting defect.** Per-class APs move in both directions and far more than the total (lion +6.9, bear −4.5, mean 1.6, 18 of 30 below), and AP50 here is the mean over 30 classes with few videos each. Evaluation itself is exact (M1′ reproduced the released checkpoint to 0.002).
+  - Cheap check available (≈1.6 GPU-hours): evaluate `epoch_8.pth` to see this run's epoch-to-epoch spread; the original's MAMBA log shows 0.2 AP50 between its epochs 5 and 6.
 
 ### Phase 8 — Consolidate
 - [ ] Freeze legacy harness outputs as golden files; a pytest suite that runs without the legacy env (locally, on Isambard, in CI).
@@ -356,6 +367,7 @@ Order changed from *data → training → reproduce* to **evaluation first**. A 
 - **Checkpoint reading uses `weights_only=True`.** Fine for released `*_model.pth`; resuming a *full* mmcv training checkpoint (optimizer state, meta) may need `weights_only=False`.
 
 ## Progress log
+- **2026-09-17 (M3′)** — **STPN trained with vfe scores AP50 84.54 (original 85.15).** Its training reproduced the original run: per-epoch losses within 0.6% from epoch 2 on, accuracy equal to two decimals, every LR on schedule. The gap sits in the final weights, with per-class APs swinging ±4 in both directions, i.e. run-to-run variance rather than a defect. Both reproductions now land ~0.6 low: MAMBA's is explained by the published model's batch-4 epochs 1–3; STPN's is not, and a variance estimate (evaluating another epoch, or a second seed) would settle it.
 - **2026-09-17 (M3)** — **M3 missed: MAMBA trained with vfe scores AP50 83.16 (original 83.82).** The run followed the published config (batch 8 throughout); the published model, it turns out, trained epochs 1–3 at batch 4, and M3's losses stay 15–25% above the original log's. A rerun with the original's mixed schedule is proposed (~17 GPU-hours, not yet approved). M3′ (STPN) tracks its original log within ~1% but runs at 0.28 s per iteration, so it will take ~40 GPU-hours instead of the estimated ~28; its final evaluation will not fit the 10 h limit and is chained as a separate job (6627952).
 - **2026-09-17 (STPN)** — Phase 7a/7b: STPN's prompted Swin, DVP predictor and detector, and its training pipeline (AutoAugment, multi-scale resize, per-frame crops, max-size pad, second resize) are ported. Released-checkpoint inference matches legacy frame by frame (≤ 5.2e-7), training batches are bit-exact (179 artifacts), and the training step passes on real STPN batches (2,209 artifacts). **M1′ passed: the released STPN checkpoint scores AP50 85.150 through vfe (original 85.152).** The training-step harness now judges optimiser steps by state across stacks and by formula per stack, because comparing raw updates mostly measured float32 quantisation and Adam's amplification of roundoff. M3 (MAMBA 6x) is in epoch 2; M3′ (STPN 9x) is queued behind a smoke run.
 - **2026-09-17 (M1, 6d)** — Data staged on Isambard (checksums verified, nothing missing). **M1 passed: the released MAMBA checkpoint scores AP50 83.80 through vfe on 4 GH200s (original 83.82)**, and the data pipeline turned out bit-exact between aarch64 and x86. Phase 6d, the training loop, is written and verified locally: its data loaders match mmdet's real multi-worker loaders batch for batch, and gradient accumulation with per-virtual-rank generator streams makes 1 process × 2 micro-steps bit-identical to 2 DDP processes, which makes one 4-GPU node equivalent to the original 8-GPU run. Resume is bit-exact as well. 5d's DET samples are now checked too. Next: M2 on Isambard.
