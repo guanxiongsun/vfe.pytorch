@@ -14,6 +14,12 @@
 #   pipeline parity artifacts for a cross-machine comparison:
 #     CONFIG=... CKPT=... SMOKE=1 sbatch --gpus=1 --time=00:15:00 tools/isambard/test_video.sbatch
 #
+#   Safety net for a training job whose final evaluation may not fit its time
+#   limit: evaluate the last checkpoint once the job ends, unless the run
+#   already logged an evaluation:
+#     CONFIG=... CKPT=WORK_DIR/epoch_N.pth SKIP_IF_EVALUATED=WORK_DIR \
+#         sbatch --dependency=afterany:<train job id> tools/isambard/test_video.sbatch
+#
 #SBATCH --job-name=vfe_test
 #SBATCH --account=brics.b5cs
 #SBATCH --output=vfe_test_%j.out
@@ -28,6 +34,11 @@ DATA="${DATA:-/projects/b5cs/imagenet_vid/ILSVRC}"
 WORK="${WORK:-$SCRATCHDIR/vfe/work_dirs/test_$(basename "$CONFIG" .py)_${SLURM_JOB_ID}}"
 PY="$REPO/.venv/bin/python"
 cd "$REPO"
+
+if [[ -n "${SKIP_IF_EVALUATED:-}" ]] && grep -qs '"mode": "val"' "$SKIP_IF_EVALUATED"/*.log.json; then
+    echo "==> $(date -Is) $SKIP_IF_EVALUATED already logged an evaluation; nothing to do"
+    exit 0
+fi
 
 # The configs read data_root "data/ILSVRC/", relative to the repo.
 if [[ ! -e data/ILSVRC ]]; then
