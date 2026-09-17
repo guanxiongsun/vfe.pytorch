@@ -1,5 +1,5 @@
 from .resnet import BasicBlock, Bottleneck, ResLayer, ResNet
-from .swin import SwinTransformer, swin_convert
+from .swin import STPNSwinTransformer, SwinTransformer, swin_convert
 
 __all__ = [
     "ResNet",
@@ -7,5 +7,6 @@ __all__ = [
     "BasicBlock",
     "Bottleneck",
     "SwinTransformer",
+    "STPNSwinTransformer",
     "swin_convert",
 ]

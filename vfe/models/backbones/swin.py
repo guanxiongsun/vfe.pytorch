@@ -5,6 +5,12 @@ original Microsoft one -- it uses ``nn.Unfold`` for patch merging and splits
 the MLP into mmcv's ``FFN``. ``swin_convert`` below translates the upstream
 checkpoint layout into this one; the ``convert_weights=True`` flag in the STPN
 configs is what triggers it.
+
+``STPNSwinTransformer`` is STPN's prompted variant (port of
+``mmdet.models.backbones.sptn_swin``): prompt tokens prepended to the patch
+tokens travel through every stage. The attention and merging modules detect
+them from the sequence length (``L - H * W`` extra tokens), so without prompts
+they run exactly the plain Swin computation.
 """
 
 from __future__ import annotations
@@ -23,6 +29,8 @@ from ..builder import BACKBONES
 from ..checkpoint import _extract_state_dict, _read_checkpoint, load_state_dict
 
 __all__ = [
+    "STPNSwinTransformer",
+    "PromptedPatchMerging",
     "SwinTransformer",
     "SwinBlock",
     "SwinBlockSequence",
@@ -73,8 +81,11 @@ class WindowMSA(nn.Module):
     def init_weights(self) -> None:
         nn.init.trunc_normal_(self.relative_position_bias_table, std=0.02)
 
-    def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
-        """``x``: (num_windows*B, N, C); ``mask``: (num_windows, N, N) in (-inf, 0]."""
+    def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None,
+                num_prompts: int = 0) -> torch.Tensor:
+        """``x``: (num_windows*B, num_prompts + Wh*Ww, C); ``mask``: (num_windows,
+        Wh*Ww, Wh*Ww) in (-inf, 0]. Prompt tokens get no position bias and are
+        never masked."""
         B, N, C = x.shape
         qkv = (
             self.qkv(x)
@@ -94,10 +105,23 @@ class WindowMSA(nn.Module):
             -1,
         )
         relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()
+        if num_prompts:
+            nH, Wh_Ww, _ = relative_position_bias.shape
+            relative_position_bias = torch.cat(
+                (relative_position_bias.new_zeros(nH, num_prompts, Wh_Ww), relative_position_bias),
+                dim=1)
+            relative_position_bias = torch.cat(
+                (relative_position_bias.new_zeros(nH, Wh_Ww + num_prompts, num_prompts),
+                 relative_position_bias), dim=-1)
         attn = attn + relative_position_bias.unsqueeze(0)
 
         if mask is not None:
             nW = mask.shape[0]
+            if num_prompts:
+                Wh_Ww = mask.shape[-1]
+                mask = torch.cat((mask.new_zeros(nW, num_prompts, Wh_Ww), mask), dim=1)
+                mask = torch.cat((mask.new_zeros(nW, Wh_Ww + num_prompts, num_prompts), mask),
+                                 dim=-1)
             attn = attn.view(B // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
             attn = attn.view(-1, self.num_heads, N, N)
         attn = self.softmax(attn)
@@ -118,6 +142,12 @@ class ShiftWindowMSA(nn.Module):
 
     When ``shift_size > 0`` the feature map is rolled and an attention mask
     stops tokens that wrapped around from attending to each other.
+
+    Prompt tokens prepended to ``query`` join every window's attention and
+    leave as their mean over windows. As in the original, they are repeated
+    over windows in (window, batch) order while windows are laid out in
+    (batch, window) order; the two agree only for a batch of one, the only
+    batch STPN runs with prompts.
     """
 
     def __init__(
@@ -152,8 +182,12 @@ class ShiftWindowMSA(nn.Module):
     def forward(self, query: torch.Tensor, hw_shape: tuple[int, int]) -> torch.Tensor:
         B, L, C = query.shape
         H, W = hw_shape
-        if L != H * W:
+        num_prompts = L - H * W
+        if num_prompts < 0:
             raise ValueError(f"input has {L} tokens but hw_shape {hw_shape} implies {H * W}")
+        if num_prompts:
+            prompts = query[:, :num_prompts, :]
+            query = query[:, num_prompts:, :]
         query = query.view(B, H, W, C)
 
         # Pad up to a whole number of windows.
@@ -192,8 +226,16 @@ class ShiftWindowMSA(nn.Module):
 
         query_windows = self.window_partition(shifted_query)
         query_windows = query_windows.view(-1, self.window_size**2, C)
+        if num_prompts:
+            num_windows = int(query_windows.shape[0] / B)
+            prompt_windows = (prompts.unsqueeze(0).expand(num_windows, -1, -1, -1)
+                              .reshape(-1, num_prompts, C))
+            query_windows = torch.cat((prompt_windows, query_windows), dim=1)
 
-        attn_windows = self.w_msa(query_windows, mask=attn_mask)
+        attn_windows = self.w_msa(query_windows, mask=attn_mask, num_prompts=num_prompts)
+        if num_prompts:
+            prompts = attn_windows[:, :num_prompts, :].view(-1, B, num_prompts, C).mean(0)
+            attn_windows = attn_windows[:, num_prompts:, :]
         attn_windows = attn_windows.view(-1, self.window_size, self.window_size, C)
         shifted_x = self.window_reverse(attn_windows, H_pad, W_pad)
 
@@ -205,7 +247,10 @@ class ShiftWindowMSA(nn.Module):
         if pad_r > 0 or pad_b > 0:
             x = x[:, :H, :W, :].contiguous()
 
-        return self.drop(x.view(B, H * W, C))
+        x = x.view(B, H * W, C)
+        if num_prompts:
+            x = torch.cat((prompts, x), dim=1)
+        return self.drop(x)
 
     def window_reverse(self, windows: torch.Tensor, H: int, W: int) -> torch.Tensor:
         window_size = self.window_size
@@ -341,6 +386,23 @@ class SwinBlockSequence(nn.Module):
         return x, hw_shape, x, hw_shape
 
 
+class PromptedPatchMerging(PatchMerging):
+    """``PatchMerging`` that carries prepended prompt tokens along: each prompt
+    is widened by concatenating four copies of itself (standing in for a 2x2
+    neighbourhood), then normalised and reduced together with the patches."""
+
+    def forward(self, x: torch.Tensor, input_size) -> tuple[torch.Tensor, tuple[int, int]]:
+        num_prompts = x.shape[1] - input_size[0] * input_size[1]
+        if num_prompts == 0:
+            return super().forward(x, input_size)
+        prompts = x[:, :num_prompts, :]
+        prompts = torch.cat((prompts, prompts, prompts, prompts), dim=-1)
+        x, out_size = self.merge(x[:, num_prompts:, :], input_size)
+        x = torch.cat((prompts, x), dim=1)
+        x = self.norm(x) if self.norm else x
+        return self.reduction(x), out_size
+
+
 @BACKBONES.register_module()
 class SwinTransformer(nn.Module):
     """Swin Transformer.
@@ -353,6 +415,8 @@ class SwinTransformer(nn.Module):
         frozen_stages: stages (plus the patch embed) held in eval with grads
             off. ``-1`` freezes nothing.
     """
+
+    patch_merging_cls: type[PatchMerging] = PatchMerging
 
     def __init__(
         self,
@@ -425,7 +489,7 @@ class SwinTransformer(nn.Module):
         stage_channels = embed_dims
         for i in range(num_layers):
             downsample = (
-                PatchMerging(
+                self.patch_merging_cls(
                     in_channels=stage_channels,
                     out_channels=2 * stage_channels,
                     stride=strides[i + 1],
@@ -554,6 +618,54 @@ class SwinTransformer(nn.Module):
             x, hw_shape, out, out_hw_shape = stage(x, hw_shape)
             if i in self.out_indices:
                 out = getattr(self, f"norm{i}")(out)
+                out = (
+                    out.view(-1, *out_hw_shape, self.num_features[i])
+                    .permute(0, 3, 1, 2)
+                    .contiguous()
+                )
+                outs.append(out)
+        return outs
+
+
+@BACKBONES.register_module()
+class STPNSwinTransformer(SwinTransformer):
+    """Swin with STPN's prompts: ``forward(x, prompt_embd)`` prepends
+    ``prompt_embd`` (``(num_prompts, C)``, shared by the batch) to the patch
+    tokens, every stage carries them along, and they are removed from the
+    outputs. Called without prompts it is the plain Swin.
+
+    Only what the STPN configs use is ported: shallow prompts
+    (``deep=False``) prepended to the input (``location='prepend'``).
+    ``prompt_cfg['dropout']`` applies to the prompts on the way in.
+    """
+
+    patch_merging_cls = PromptedPatchMerging
+
+    def __init__(self, *args, prompt_cfg: dict, **kwargs):
+        super().__init__(*args, **kwargs)
+        if prompt_cfg.get("location", "prepend") != "prepend" or prompt_cfg.get("deep", False):
+            raise NotImplementedError("only shallow prompts prepended to the input are ported")
+        self.prompt_num_tokens = prompt_cfg["num_tokens"]
+        self.prompt_dropout = nn.Dropout(prompt_cfg.get("dropout", 0.0))
+        self.prompt_proj = nn.Identity()
+
+    def forward(self, x: torch.Tensor,
+                prompt_embd: torch.Tensor | None = None) -> list[torch.Tensor]:
+        x, hw_shape = self.patch_embed(x)
+        if self.use_abs_pos_embed:
+            x = x + self.absolute_pos_embed
+        x = self.drop_after_pos(x)
+        if prompt_embd is not None:
+            prompts = self.prompt_dropout(prompt_embd.expand(x.shape[0], -1, -1))
+            x = torch.cat((prompts, x), dim=1)
+
+        outs = []
+        for i, stage in enumerate(self.stages):
+            x, hw_shape, out, out_hw_shape = stage(x, hw_shape)
+            if i in self.out_indices:
+                out = getattr(self, f"norm{i}")(out)
+                if prompt_embd is not None:
+                    out = out[:, self.prompt_num_tokens:, :]
                 out = (
                     out.view(-1, *out_hw_shape, self.num_features[i])
                     .permute(0, 3, 1, 2)

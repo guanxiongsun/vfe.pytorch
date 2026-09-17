@@ -1,6 +1,7 @@
 """Parity check: end-to-end video inference on real val frames, vfe vs mmdet.
 
-Runs the released MAMBA checkpoint over the first ``--videos`` val videos in
+Runs a released checkpoint (MAMBA by default; ``--config`` selects another
+model, e.g. STPN) over the first ``--videos`` val videos in
 test order on each stack (mmdet: ``MMDataParallel`` + mmcv collate; vfe:
 ``vfe.apis.single_gpu_test`` + ``collate_video_test``) and compares every
 frame's detections as a set (``parity_detector.match_detections``). This is
@@ -44,7 +45,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFIG = REPO_ROOT / "configs/vid/mamba/mamba_r101_dc5_6x.py"
 
 
-def run(impl, ckpt, videos, min_score):
+def run(impl, config, ckpt, videos, min_score):
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
     torch.backends.cudnn.benchmark = False
@@ -57,7 +58,7 @@ def run(impl, ckpt, videos, min_score):
         from mmdet.datasets import build_dataset
         from mmdet.models import build_model
 
-        cfg = Config.fromfile(str(CONFIG))
+        cfg = Config.fromfile(str(config))
         dataset = build_dataset(cfg.data.test)
         collate_fn = partial(collate, samples_per_gpu=1)
     else:
@@ -67,7 +68,7 @@ def run(impl, ckpt, videos, min_score):
         from vfe.models.builder import build_model
         from vfe.models.checkpoint import load_checkpoint
 
-        cfg = Config.fromfile(str(CONFIG))
+        cfg = Config.fromfile(str(config))
         dataset = build_dataset(cfg.data.test)
         collate_fn = collate_video_test
 
@@ -103,6 +104,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--impl", choices=["mmdet", "vfe"])
     ap.add_argument("--ckpt")
+    ap.add_argument("--config", default=str(CONFIG))
     ap.add_argument("--videos", type=int, default=1)
     ap.add_argument("--out")
     ap.add_argument("--compare", nargs=2, metavar=("A", "B"))
@@ -114,7 +116,7 @@ if __name__ == "__main__":
         pd.compare(*args.compare, atol=1e-6, rtol=args.rtol, rtol_overrides={},
                    label="VID TEST")
     elif args.impl and args.out and args.ckpt:
-        torch.save(run(args.impl, args.ckpt, args.videos, args.min_score), args.out)
+        torch.save(run(args.impl, args.config, args.ckpt, args.videos, args.min_score), args.out)
         print(f"saved -> {args.out}")
     else:
         ap.error("pass --impl/--ckpt/--out, or --compare")

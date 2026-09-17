@@ -62,7 +62,7 @@ def to_cpu(obj):
     return obj
 
 
-def build(impl, select=None):
+def build(impl, select=None, config=CONFIG):
     """``select`` picks the dataset config out of ``data.train`` (default: all)."""
     if impl == "mmdet":
         patch_legacy_det_coco()
@@ -72,7 +72,7 @@ def build(impl, select=None):
         from mmdet.datasets import build_dataset
         from mmdet.datasets.samplers import DistributedGroupSampler, GroupSampler
 
-        train = Config.fromfile(str(CONFIG)).data.train
+        train = Config.fromfile(str(config)).data.train
         dataset = build_dataset(select(train) if select else train)
 
         def batch_of(idx):
@@ -92,7 +92,7 @@ def build(impl, select=None):
         from vfe.datasets import build_dataset, collate_video_train
         from vfe.datasets.samplers import DistributedGroupSampler, GroupSampler
 
-        train = Config.fromfile(str(CONFIG)).data.train
+        train = Config.fromfile(str(config)).data.train
         dataset = build_dataset(select(train) if select else train)
 
         def batch_of(idx):

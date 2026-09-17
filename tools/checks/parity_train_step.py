@@ -1,14 +1,18 @@
-"""Parity check: MAMBA training steps on real data, vfe vs mmdet (Phase 6c).
+"""Parity check: training steps on real data, vfe vs mmdet (Phases 6c, 7).
 
-Each side builds MAMBA from its 6x config, loads the released checkpoint and
-takes two SGD steps on real VID training samples, built by its own data path
-(``parity_vid_train_data`` shows the two are bit-identical). CPU only: the
-legacy CUDA stack mis-computes some gradients (see REWRITE_PLAN.md).
+Each side builds the model from ``--config`` (MAMBA 6x by default; STPN with
+``configs/vid/stpn/stpn_swint_adam_9x.py``), loads the released checkpoint and
+takes two optimiser steps on real VID training samples, built by its own data
+path from ``--data-config`` (default: the same config; ``parity_vid_train_data``
+shows the two data paths are bit-identical). CPU only: the legacy CUDA stack
+mis-computes some gradients (see REWRITE_PLAN.md).
 
 A step is what mmcv's runner did per iteration: ``train_step`` (forward_train
-and parse_losses), then ``OptimizerHook``: zero_grad, backward, clip the total
-gradient norm (35, L2), SGD step. The second step exercises the momentum
-buffers and runs on the weights the first step produced.
+and parse_losses), then ``OptimizerHook``: zero_grad, backward, gradient
+clipping if the config has it (MAMBA: 35, L2; STPN: none), optimiser step
+(MAMBA: SGD; STPN: AdamW with per-parameter decay). The second step exercises
+the optimiser state and runs on the weights the first step produced. Swin's
+DropPath is active in training; its draws come from the seeded CPU generator.
 
 Recorded per step, under ``step<k>/``:
 
@@ -18,10 +22,19 @@ Recorded per step, under ``step<k>/``:
   must be every trainable parameter). ``exact/sampled`` -- the RoI sampler's
   positive and negative picks. ``exact/buffers`` -- digest of all buffers, and
   ``exact/buffers_unchanged`` (frozen BatchNorm statistics must not move).
-* ``loss/*`` (the logged values), ``grad_norm`` (before clipping),
-  ``proposals/*`` (key frame and reference frames).
-* ``grad/<param>`` (before clipping), ``momentum/<param>`` (after the step),
-  ``update/<param>`` (the change the step made). Parameters up to ``SMALL``
+* ``loss/*`` (the logged values), ``grad_norm`` (total L2 norm before any
+  clipping), ``proposals/*`` (key frame, and MAMBA's reference frames).
+* ``grad/<param>`` (before clipping), ``state/<param>.<name>`` (the optimiser's
+  state tensors after the step: ``momentum_buffer``; ``exp_avg``,
+  ``exp_avg_sq``), ``update/<param>`` (the change the step made). For
+  Adam-family optimisers each element of ``update`` is weighted by
+  ``v / (v + ADAM_FLOOR**2)``, ``v`` the bias-corrected second moment: where
+  gradients are roundoff-sized, Adam divides them by their own magnitude
+  (eps = 1e-8 barely damps it), so the stacks' different roundoff yields steps
+  of different size and even sign. Seen on STPN: all of one weight's update
+  difference came from 8 of 147,456 elements with |g| < 1e-7, while its
+  gradient matched to 1.6e-6. The weight is smooth on purpose: a hard cut at the
+  floor let single elements fall on different sides of it on the two stacks. Parameters up to ``SMALL``
   elements are saved whole; larger ones as a sketch (key suffix ``:sketch``),
   ``[norm, 16 bins]``, where
   each bin sums a hash-chosen subset of the elements with hash-chosen signs.
@@ -35,6 +48,7 @@ Usage:
     conda run -n vfe --no-capture-output python tools/checks/parity_train_step.py --impl mmdet --checkpoint CKPT --out A.pt
     python tools/checks/parity_train_step.py --impl vfe --checkpoint CKPT --out B.pt
     python tools/checks/parity_train_step.py --compare A.pt B.pt
+    (STPN: add --config configs/vid/stpn/stpn_swint_adam_9x.py to both runs)
 """
 
 import argparse
@@ -57,6 +71,7 @@ SAMPLES = (711, 40000)  # a downscaled, flipped frame with a box on the edge; an
 SEED = 1466607766
 SMALL = 4096
 BINS = 16
+ADAM_FLOOR = 1e-6
 
 
 T0 = time.time()
@@ -119,10 +134,10 @@ def batch_digest(batch):
 
 # ---- the two stacks ------------------------------------------------------------------
 
-def load_batches(impl):
+def load_batches(impl, data_config):
     """Build only the VID training set, take the samples, and free the set (its
     annotation index is larger than the model)."""
-    dataset, batch_of, _, _ = td.build(impl, select=lambda train: train[0])
+    dataset, batch_of, _, _ = td.build(impl, select=lambda train: train[0], config=data_config)
     batches = []
     for idx in SAMPLES:
         random.seed(1000 + idx)
@@ -133,14 +148,14 @@ def load_batches(impl):
     return batches
 
 
-def build(impl, checkpoint):
+def build(impl, config, checkpoint):
     if impl == "mmdet":
         from mmcv import Config
         from mmcv.runner import OptimizerHook, build_optimizer, load_checkpoint
 
         from mmdet.models import build_model
 
-        cfg = Config.fromfile(str(CONFIG))
+        cfg = Config.fromfile(str(config))
         model = build_model(cfg.model)
         load_checkpoint(model, checkpoint, map_location="cpu")
         optimizer = build_optimizer(model, cfg.optimizer)
@@ -151,7 +166,7 @@ def build(impl, checkpoint):
             return outputs["loss"], outputs["log_vars"]
 
         def clip():
-            return hook.clip_grads(model.parameters())
+            return hook.clip_grads(model.parameters()) if hook.grad_clip else None
     else:
         sys.path.insert(0, str(REPO_ROOT))
         from vfe.config import Config
@@ -160,16 +175,17 @@ def build(impl, checkpoint):
         from vfe.models.checkpoint import load_checkpoint
         from vfe.models.detectors.base import parse_losses
 
-        cfg = Config.fromfile(str(CONFIG))
+        cfg = Config.fromfile(str(config))
         model = build_model(cfg.model)
         load_checkpoint(model, checkpoint, map_location="cpu")
         optimizer = build_optimizer(model, cfg.optimizer)
+        grad_clip = cfg.optimizer_config.get("grad_clip")
 
         def forward(batch):
             return parse_losses(model(**batch))
 
         def clip():
-            return clip_grads(model.parameters(), **cfg.optimizer_config["grad_clip"])
+            return clip_grads(model.parameters(), **grad_clip) if grad_clip else None
     return model, optimizer, forward, clip
 
 
@@ -185,13 +201,13 @@ def capture(obj, name, sink):
     setattr(obj, name, wrapper)
 
 
-def run(impl, checkpoint, threads):
+def run(impl, config, data_config, checkpoint, threads, debug_param=None):
     if threads:
         torch.set_num_threads(threads)
     log(f"{impl}: torch {torch.__version__}, {torch.get_num_threads()} threads")
-    batches = load_batches(impl)
+    batches = load_batches(impl, data_config)
     log("batches built")
-    model, optimizer, forward, clip = build(impl, checkpoint)
+    model, optimizer, forward, clip = build(impl, config, checkpoint)
     model.train()
     log("model built, checkpoint loaded")
 
@@ -228,8 +244,9 @@ def run(impl, checkpoint, threads):
         # implementation truncates the RPN's returned list in place, whereas
         # vfe returns a new truncated list; slicing here records the effective
         # RoI-head input on both sides rather than that implementation detail.
-        topk = detector.roi_head.bbox_head.topk
-        for i, ref in enumerate(ref_rpn_calls[0]):
+        # (STPN has no reference proposals.)
+        topk = getattr(detector.roi_head.bbox_head, "topk", None)
+        for i, ref in enumerate(ref_rpn_calls[0] if ref_rpn_calls else []):
             out[f"{tag}/proposals/ref{i}"] = ref[:topk].detach()
         (sampled,) = samples
         out[f"{tag}/exact/sampled"] = torch.cat([sampled.pos_inds, sampled.neg_inds]).long()
@@ -240,16 +257,34 @@ def run(impl, checkpoint, threads):
         for name in with_grad:
             put(out, f"{tag}/grad/{name}", params[name].grad)
 
-        grad_norm = clip()
-        out[f"{tag}/grad_norm"] = torch.tensor(float(grad_norm), dtype=torch.float64)
+        grad_norm = torch.stack([params[n].grad.detach().double().norm() for n in with_grad]).norm()
+        out[f"{tag}/grad_norm"] = grad_norm
+        clipped_norm = clip()
         before = {name: params[name].detach().clone() for name in with_grad}
+        if debug_param:
+            out[f"{tag}/debug/grad"] = params[debug_param].grad.detach().clone()
+            out[f"{tag}/debug/before"] = before[debug_param].clone()
         optimizer.step()
-        log(f"{tag}: grad norm {float(grad_norm):.4f} (clip at 35), step taken")
+        log(f"{tag}: grad norm {float(grad_norm):.4f} "
+            f"({'clipping configured' if clipped_norm is not None else 'no clipping'}), step taken")
 
         for name in with_grad:
             p = params[name]
-            put(out, f"{tag}/momentum/{name}", optimizer.state[p]["momentum_buffer"])
-            put(out, f"{tag}/update/{name}", p.detach().double() - before[name].double())
+            state = optimizer.state[p]
+            for key, value in sorted(state.items()):
+                if key != "step" and isinstance(value, torch.Tensor):
+                    put(out, f"{tag}/state/{name}.{key}", value)
+            update = p.detach().double() - before[name].double()
+            if "exp_avg_sq" in state:
+                group = next(g for g in optimizer.param_groups if any(q is p for q in g["params"]))
+                v_hat = state["exp_avg_sq"].double() / (1 - group["betas"][1] ** float(state["step"]))
+                update = update * (v_hat / (v_hat + ADAM_FLOOR**2))
+            put(out, f"{tag}/update/{name}", update)
+        if debug_param:
+            out[f"{tag}/debug/after"] = params[debug_param].detach().clone()
+            for key, value in optimizer.state[params[debug_param]].items():
+                if isinstance(value, torch.Tensor) and value.numel() > 1:
+                    out[f"{tag}/debug/state.{key}"] = value.detach().clone()
         del before
         buffers = digest_tensors([b for _, b in sorted(model.named_buffers())])
         out[f"{tag}/exact/buffers"] = buffers
@@ -269,7 +304,7 @@ TOLERANCES = {
     "grad_norm": 1e-4,
     "proposals": 1e-4,
     "grad": 1e-3,
-    "momentum": 1e-3,
+    "state": 2e-3,  # exp_avg_sq squares the gradient, doubling its relative difference
     "update": 1e-3,
 }
 
@@ -299,10 +334,12 @@ def compare(path_a, path_b):
                 failures.append(f"{key}: {side}'s parameters with gradients are not "
                                 "exactly its trainable parameters")
         for key in sorted(k for k in artifacts if k.endswith("/grad_norm")):
-            print(f"{side} {key}: {artifacts[key].item():.4f} (clipped: {artifacts[key].item() > 35})")
+            print(f"{side} {key}: {artifacts[key].item():.4f}")
     for key in sorted(set(a) | set(b)):
         if key not in a or key not in b:
             failures.append(f"{key}: only in {'A' if key in a else 'B'}")
+            continue
+        if "/debug/" in key:
             continue
         if "/exact/" in key or key.startswith("exact/"):
             if a[key].shape != b[key].shape or not torch.equal(a[key], b[key]):
@@ -313,6 +350,35 @@ def compare(path_a, path_b):
             failures.append(f"{key}: shape {tuple(a[key].shape)} vs {tuple(b[key].shape)}")
             continue
         name = key.split("/", 2)[-1]
+        step = key.split("/")[0]
+        adaptive = any(k.startswith(f"{step}/state/") and ".exp_avg" in k for k in a)
+        if adaptive and kind in ("state", "update") and "ref_fc_embed.bias" in name:
+            # Adam divides this roundoff-level gradient (see below) by its own
+            # magnitude, turning noise into an lr-sized step of random sign.
+            roundoff_grads.append((name, 0.0))
+            continue
+        if name.split(".")[-2:] == ["qkv", "bias"] and not key.endswith(":sketch"):
+            # Swin's key bias adds q . b_k to every logit in a query's row, which
+            # softmax ignores: its gradient is exactly zero and both stacks
+            # return roundoff (like ref_fc_embed.bias below). Compare the query
+            # and value thirds; require the key third's gradient to be
+            # roundoff; leave the key third out of Adam's state and update,
+            # which scale that roundoff up to lr-sized steps of random sign.
+            third = a[key].numel() // 3
+            q_a, k_a, v_a = a[key].split(third)
+            q_b, k_b, v_b = b[key].split(third)
+            if kind == "grad":
+                magnitude = max(k_a.abs().max().item(), k_b.abs().max().item())
+                if magnitude > 1e-7:
+                    failures.append(f"{key}: key-bias gradient is not roundoff (max {magnitude:.3e})")
+                roundoff_grads.append((name, magnitude))
+            kept = (torch.cat([q_a, v_a]), torch.cat([q_b, v_b])) if adaptive or kind == "grad" \
+                else (a[key], b[key])
+            rel = relative_diff(*kept, False)
+            worst.setdefault(kind, []).append((rel, name))
+            if rel > TOLERANCES[kind]:
+                failures.append(f"{key}: relative difference {rel:.3e} > {TOLERANCES[kind]:.0e}")
+            continue
         if kind == "grad" and name.endswith("ref_fc_embed.bias"):
             # This bias shifts every attention logit in a row equally, so its
             # gradient is exactly zero by softmax shift-invariance. Different
@@ -336,8 +402,9 @@ def compare(path_a, path_b):
         top = ", ".join(f"{name} {rel:.2e}" for rel, name in values[:3])
         print(f"{kind:10s} n={len(values):4d}  max {values[0][0]:.2e}  (tol {TOLERANCES[kind]:.0e})  {top}")
     if roundoff_grads:
-        print(f"NOTE  {len(roundoff_grads)} shift-invariant ref_fc_embed.bias gradients are "
-              f"roundoff (largest {max(x[1] for x in roundoff_grads):.2e})")
+        print(f"NOTE  {len(roundoff_grads)} shift-invariant bias artifacts (ref_fc_embed.bias, the "
+              "key third of qkv.bias) hold only roundoff and are checked as such (largest "
+              f"gradient {max(x[1] for x in roundoff_grads):.2e})")
     for note in failures:
         print(f"FAIL  {note}")
     print("-" * 70)
@@ -349,7 +416,10 @@ def compare(path_a, path_b):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--impl", choices=["mmdet", "vfe"])
-    ap.add_argument("--checkpoint", help="released MAMBA epoch_6_model.pth")
+    ap.add_argument("--checkpoint", help="the released checkpoint for --config")
+    ap.add_argument("--config", default=str(CONFIG))
+    ap.add_argument("--data-config", help="config whose training data to use (default: --config)")
+    ap.add_argument("--debug-param", help="also save this parameter's full tensors (not compared)")
     ap.add_argument("--threads", type=int, default=0, help="torch CPU threads (default: torch's)")
     ap.add_argument("--out")
     ap.add_argument("--compare", nargs=2, metavar=("A", "B"))
@@ -357,7 +427,8 @@ if __name__ == "__main__":
     if args.compare:
         compare(*args.compare)
     elif args.impl and args.out and args.checkpoint:
-        torch.save(run(args.impl, args.checkpoint, args.threads), args.out)
+        torch.save(run(args.impl, args.config, args.data_config or args.config, args.checkpoint,
+                       args.threads, args.debug_param), args.out)
         log(f"saved -> {args.out}")
     else:
         ap.error("pass --impl/--checkpoint/--out, or --compare")

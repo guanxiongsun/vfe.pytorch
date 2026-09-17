@@ -193,6 +193,15 @@ class PatchMerging(nn.Module):
     def forward(
         self, x: torch.Tensor, input_size: Sequence[int]
     ) -> tuple[torch.Tensor, tuple[int, int]]:
+        x, out_size = self.merge(x, input_size)
+        x = self.norm(x) if self.norm else x
+        return self.reduction(x), out_size
+
+    def merge(
+        self, x: torch.Tensor, input_size: Sequence[int]
+    ) -> tuple[torch.Tensor, tuple[int, int]]:
+        """The 2x2 concatenation before norm and reduction: ``(B, L, C)`` to
+        ``(B, L/4, 4C)``, and the merged spatial shape."""
         B, L, C = x.shape
         if not isinstance(input_size, Sequence):
             raise TypeError(f"input_size must be a Sequence, got {input_size!r}")
@@ -219,9 +228,7 @@ class PatchMerging(nn.Module):
             - 1
         ) // self.sampler.stride[1] + 1
 
-        x = x.transpose(1, 2)
-        x = self.norm(x) if self.norm else x
-        return self.reduction(x), (out_h, out_w)
+        return x.transpose(1, 2), (out_h, out_w)
 
 
 class FFN(nn.Module):
