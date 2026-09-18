@@ -120,7 +120,6 @@ work_dirs/
 *.py~
 *.sh~
 *.png
-
 # Slurm job outputs written next to the submitted script
 vfe_train_*.out
 vfe_test_*.out
