@@ -306,8 +306,8 @@ Order changed from *data → training → reproduce* to **evaluation first**. A 
 ### Phase 8 — Consolidate
 - [x] **Decided 2026-09-18: the legacy `mmdet/` tree and the `vfe` conda env stay, as the permanent parity oracle.** No golden files: every harness in `tools/checks/` keeps running both stacks live, on this machine. Nothing is deleted, and the legacy install files (`setup_mmdet_legacy.py`, `requirements-mmdet-legacy.txt`) stay with it.
 - [x] Fast tests that need neither the legacy env nor the data: `tests/vfe/` (`python -m pytest tests/vfe`, 34 tests in ~3 s, CPU) covers the new infrastructure by invariants — `--cfg-options` parsing and list-index merges, sampler lengths and coverage, the virtual-rank layout and mmdet worker seeds, the LR schedule, clipping, independent and restorable random streams, checkpoint round trips and resume rescaling, exact gradient accumulation, STPN's crop/pad/resize/AutoAugment draws, both models' parameter counts, and prompted Swin reducing exactly to plain Swin without prompts.
-- [ ] README for the pure-PyTorch package (install, data layout, evaluation and training commands, the Isambard jobs) with the two-environment parity workflow documented alongside it; `uv.lock`.
-- [ ] Isambard env: editable-install `vfe` (Phase 1b leftover), drop the stale `stash@{0}`.
+- [x] README section for the pure-PyTorch package (what it reproduces, install, evaluation and training commands, accumulation standing in for the original GPU count, the unit tests, and how to re-run a parity check); the original mmcv/mmdet instructions stay, relabelled as the reference stack. `uv.lock` committed (resolved with uv, universal across x86_64 and aarch64 on Python 3.12). Slurm job outputs are git-ignored.
+- [x] Isambard env: `vfe` installed editable with `uv pip` (the venv has no pip), so it imports outside the repo directory; the stale `stash@{0}` (an empty diff) dropped.
 
 **Out of scope for now:** TDViT and EOVOD (no code in this repo: new model work, after M3′). **Dropped:** SELSA; fp16/AMP (neither original recipe used it; revisit only as a speed-up after M3).
 
