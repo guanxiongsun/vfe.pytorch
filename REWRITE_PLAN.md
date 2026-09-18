@@ -304,9 +304,9 @@ Order changed from *data → training → reproduce* to **evaluation first**. A 
   - **`epoch_8.pth` scores 84.39** (job 6652688), 0.15 below epoch 9, per-class mean difference 0.60. The run is converged and stable at the end, so the 0.61 gap to the original is a difference *between runs*, not noise within ours. It is not proof of seed variance either: consecutive epochs are highly correlated, so 0.15 is a floor on variability rather than an estimate of seed-to-seed spread. Ours-vs-original per-class differences are 2.7× larger than epoch-8-vs-9 ones (mean 1.61 vs 0.60, max 6.9 vs 3.4). Settling it would need a second run with another seed (≈40 GPU-hours), not approved.
 
 ### Phase 8 — Consolidate
-- [ ] Freeze legacy harness outputs as golden files; a pytest suite that runs without the legacy env (locally, on Isambard, in CI).
-  - Started: `tests/vfe/` (`python -m pytest tests/vfe`, 32 tests in ~3 s, CPU, no data, no legacy env) covers the new infrastructure by invariants: `--cfg-options` parsing and list-index merges, sampler lengths and coverage, the virtual-rank layout and mmdet worker seeds, the LR schedule, clipping, independent and restorable random streams, checkpoint round trips, exact gradient accumulation, STPN's crop/pad/resize/AutoAugment draws, both models' parameter counts, and prompted Swin reducing exactly to plain Swin without prompts. Golden files from the legacy harnesses are still to do.
-- [ ] Remove the legacy `mmdet/` tree and legacy install files; new README; `uv.lock`.
+- [x] **Decided 2026-09-18: the legacy `mmdet/` tree and the `vfe` conda env stay, as the permanent parity oracle.** No golden files: every harness in `tools/checks/` keeps running both stacks live, on this machine. Nothing is deleted, and the legacy install files (`setup_mmdet_legacy.py`, `requirements-mmdet-legacy.txt`) stay with it.
+- [x] Fast tests that need neither the legacy env nor the data: `tests/vfe/` (`python -m pytest tests/vfe`, 34 tests in ~3 s, CPU) covers the new infrastructure by invariants — `--cfg-options` parsing and list-index merges, sampler lengths and coverage, the virtual-rank layout and mmdet worker seeds, the LR schedule, clipping, independent and restorable random streams, checkpoint round trips and resume rescaling, exact gradient accumulation, STPN's crop/pad/resize/AutoAugment draws, both models' parameter counts, and prompted Swin reducing exactly to plain Swin without prompts.
+- [ ] README for the pure-PyTorch package (install, data layout, evaluation and training commands, the Isambard jobs) with the two-environment parity workflow documented alongside it; `uv.lock`.
 - [ ] Isambard env: editable-install `vfe` (Phase 1b leftover), drop the stale `stash@{0}`.
 
 **Out of scope for now:** TDViT and EOVOD (no code in this repo: new model work, after M3′). **Dropped:** SELSA; fp16/AMP (neither original recipe used it; revisit only as a speed-up after M3).
@@ -324,6 +324,8 @@ Order changed from *data → training → reproduce* to **evaluation first**. A 
 2. **MAMBA epochs 1–3:** no log exists. M3 assumes the published config (8×1 images, lr 1e-3, from scratch) and runs on Isambard.
 3. **Isambard budget:** approved: M1 ≈ 2 GPU-hours, M3 ≈ 20–30 GPU-hours, STPN similar.
 4. **Acceptance:** M1 within ±0.2 AP50; M3 within ±0.5.
+5. **Parity oracle (2026-09-18):** keep the legacy tree and env rather than freezing golden files; the saved legacy artifacts are ≈9.1 GB against a 13 MB repo, and shrinking them would weaken the checks. Parity stays re-runnable on this machine; `tests/vfe/` guards the new code everywhere else.
+6. **MAMBA schedule (2026-09-18):** reproduce the *published model's* schedule (epochs 1–3 at batch 4), not the config read literally; both runs are kept and reported.
 
 ## Data
 
