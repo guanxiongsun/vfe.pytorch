@@ -322,7 +322,7 @@ Order changed from *data → training → reproduce* to **evaluation first**. A 
 
   - **The curves match the original run**: per-epoch mean losses within 1.0% in epoch 1 and within 0.6% in epochs 2–9 (epoch 9: 0.1437 vs 0.1440), accuracy equal to two decimals, all 2,466 logged LRs on schedule. Unlike MAMBA, nothing about the schedule differs: this run followed the published config exactly.
   - **The gap looks like run-to-run variance in the final weights, not a porting defect.** Per-class APs move in both directions and far more than the total (lion +6.9, bear −4.5, mean 1.6, 18 of 30 below), and AP50 here is the mean over 30 classes with few videos each. Evaluation itself is exact (M1′ reproduced the released checkpoint to 0.002).
-  - Cheap check available (≈1.6 GPU-hours): evaluate `epoch_8.pth` to see this run's epoch-to-epoch spread; the original's MAMBA log shows 0.2 AP50 between its epochs 5 and 6.
+  - **`epoch_8.pth` scores 84.39** (job 6652688), 0.15 below epoch 9, per-class mean difference 0.60. The run is converged and stable at the end, so the 0.61 gap to the original is a difference *between runs*, not noise within ours. It is not proof of seed variance either: consecutive epochs are highly correlated, so 0.15 is a floor on variability rather than an estimate of seed-to-seed spread. Ours-vs-original per-class differences are 2.7× larger than epoch-8-vs-9 ones (mean 1.61 vs 0.60, max 6.9 vs 3.4). Settling it would need a second run with another seed (≈40 GPU-hours), not approved.
 
 ### Phase 8 — Consolidate
 - [ ] Freeze legacy harness outputs as golden files; a pytest suite that runs without the legacy env (locally, on Isambard, in CI).
