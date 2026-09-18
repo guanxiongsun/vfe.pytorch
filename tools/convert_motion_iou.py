@@ -3,8 +3,9 @@
 One-off, run in the legacy env (it needs scipy):
     conda run -n vfe --no-capture-output python tools/convert_motion_iou.py
 
-Reads  mmdet/datasets/mamba/vid_groundtruth_motion_iou.mat  (FGFA's table: one
-       entry per ground-truth object per val frame, in val-frame order)
+Reads  mmdet/datasets/mamba/vid_groundtruth_motion_iou.mat from the legacy tree
+       (FGFA's table: one entry per ground-truth object per val frame, in
+       val-frame order; see tools/checks/_legacy.py for where that tree is)
 Writes vfe/evaluation/vid_motion_iou.npz  with
        values   float64, every frame's entries concatenated
        offsets  int64, len(frames) + 1; frame i is values[offsets[i]:offsets[i+1]]
@@ -18,12 +19,16 @@ build implicitly, and loads without pickle or scipy.
 """
 
 import os
+import sys
 
 import numpy as np
 import scipy.io as sio
 
-SRC = "mmdet/datasets/mamba/vid_groundtruth_motion_iou.mat"
-DST = "vfe/evaluation/vid_motion_iou.npz"
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "checks"))
+from _legacy import REPO_ROOT, legacy_file  # noqa: E402
+
+SRC = legacy_file("mmdet/datasets/mamba/vid_groundtruth_motion_iou.mat")
+DST = os.path.join(str(REPO_ROOT), "vfe/evaluation/vid_motion_iou.npz")
 
 
 def legacy_per_frame_lists(mat_path):
@@ -41,7 +46,7 @@ def legacy_per_frame_lists(mat_path):
 
 
 def main():
-    frames = legacy_per_frame_lists(SRC)
+    frames = legacy_per_frame_lists(str(SRC))
     lengths = np.array([len(f) for f in frames], dtype=np.int64)
     offsets = np.concatenate([[0], np.cumsum(lengths)]).astype(np.int64)
     values = np.array([float(v) for f in frames for v in f], dtype=np.float64)

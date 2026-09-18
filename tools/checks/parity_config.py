@@ -53,10 +53,16 @@ def dump(loader, out_dir):
     for rel in CONFIGS:
         path = REPO_ROOT / rel
         if not path.exists():
-            print(f"SKIP  {rel} (missing)")
-            continue
+            raise SystemExit(f"{rel} is missing: every config listed in CONFIGS must exist")
         cfg = Config.fromfile(str(path))
         data = cfg.to_dict() if hasattr(cfg, "to_dict") else dict(cfg._cfg_dict)
+        # An empty file loads as {} in both stacks, so the diff would compare
+        # nothing and report OK. Each of these configs defines a model and a
+        # dataset; anything less means the file is a stub.
+        missing = [key for key in ("model", "data") if not data.get(key)]
+        if missing:
+            raise SystemExit(f"{rel}: loaded config has no {' or '.join(missing)} "
+                             f"-- empty or stub file?")
         target = out_dir / (rel.replace("/", "__") + ".json")
         target.write_text(json.dumps(canonical(data), sort_keys=True, indent=2))
         print(f"DUMP  {rel} -> {target.name}")

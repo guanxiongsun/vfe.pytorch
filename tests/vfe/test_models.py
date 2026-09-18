@@ -20,6 +20,8 @@ PROMPTS = dict(num_tokens=5, location="prepend", deep=False, dropout=0.0, initia
 @pytest.mark.parametrize("config, model_type, total, trainable", [
     ("configs/vid/mamba/mamba_r101_dc5_6x.py", "MAMBA", 89_620_755, 89_395_411),
     ("configs/vid/stpn/stpn_swint_adam_9x.py", "STPN", 45_006_624, 45_006_624),
+    # Swin-S: the Swin-T config with stage 3 at 18 blocks instead of 6.
+    ("configs/vid/stpn/stpn_swins_adam_9x.py", "STPN", 66_324_528, 66_324_528),
 ])
 def test_models_build_from_their_configs(config, model_type, total, trainable):
     model = build_model(Config.fromfile(REPO_ROOT / config).model)

@@ -31,13 +31,15 @@ Usage:
 import argparse
 import sys
 import time
-from pathlib import Path
 
+import _legacy
 import numpy as np
 import torch
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = _legacy.REPO_ROOT
 CONFIG = REPO_ROOT / "configs/vid/mamba/mamba_r101_dc5_6x.py"
+# FGFA's table, read from the legacy tree (see tools/checks/_legacy.py).
+MOTION_IOU_MAT = "mmdet/datasets/mamba/vid_groundtruth_motion_iou.mat"
 NUM_CLASSES = 30
 
 
@@ -72,7 +74,7 @@ def load_motion(impl):
     if impl == "mmdet":
         import scipy.io as sio
 
-        m = sio.loadmat(str(REPO_ROOT / "mmdet/datasets/mamba/vid_groundtruth_motion_iou.mat"))
+        m = sio.loadmat(str(_legacy.legacy_file(MOTION_IOU_MAT)))
         # The construction in mmdet/datasets/mamba/vid_eval.py, minus np.array.
         frames = [
             [

@@ -124,3 +124,7 @@ work_dirs/
 vfe_train_*.out
 vfe_test_*.out
 stage_imagenet_vid_*.out
+
+# Frozen legacy-side parity artifacts (tools/checks/run_parity.py).
+# Machine-local, several GB, never published.
+.parity-golden/
