@@ -1,0 +1,82 @@
+"""Detection primitives that are not ``nn.Module``s: anchors, box coding,
+assignment, sampling and NMS post-processing.
+
+Importing this package populates the registries in :mod:`vfe.core.builder`.
+"""
+
+from .anchor import AnchorGenerator, anchor_inside_flags, images_to_levels
+from .bbox import (
+    AssignResult,
+    BaseSampler,
+    BboxOverlaps2D,
+    DeltaXYWHBBoxCoder,
+    MaxIoUAssigner,
+    PseudoSampler,
+    RandomSampler,
+    SamplingResult,
+    bbox2delta,
+    bbox2result,
+    bbox2roi,
+    bbox_flip,
+    bbox_mapping,
+    bbox_mapping_back,
+    bbox_overlaps,
+    delta2bbox,
+    roi2bbox,
+)
+from .builder import (
+    ANCHOR_GENERATORS,
+    BBOX_ASSIGNERS,
+    BBOX_CODERS,
+    BBOX_SAMPLERS,
+    IOU_CALCULATORS,
+    PRIOR_GENERATORS,
+    build_anchor_generator,
+    build_assigner,
+    build_bbox_coder,
+    build_iou_calculator,
+    build_prior_generator,
+    build_sampler,
+)
+from .post_processing import multiclass_nms
+from .utils import filter_scores_and_topk, multi_apply, select_single_mlvl, unmap
+
+__all__ = [
+    "AnchorGenerator",
+    "images_to_levels",
+    "anchor_inside_flags",
+    "AssignResult",
+    "MaxIoUAssigner",
+    "BaseSampler",
+    "RandomSampler",
+    "PseudoSampler",
+    "SamplingResult",
+    "BboxOverlaps2D",
+    "bbox_overlaps",
+    "DeltaXYWHBBoxCoder",
+    "bbox2delta",
+    "delta2bbox",
+    "bbox2result",
+    "bbox2roi",
+    "roi2bbox",
+    "bbox_flip",
+    "bbox_mapping",
+    "bbox_mapping_back",
+    "BBOX_ASSIGNERS",
+    "BBOX_SAMPLERS",
+    "BBOX_CODERS",
+    "IOU_CALCULATORS",
+    "PRIOR_GENERATORS",
+    "ANCHOR_GENERATORS",
+    "build_assigner",
+    "build_sampler",
+    "build_bbox_coder",
+    "build_iou_calculator",
+    "build_prior_generator",
+    "build_anchor_generator",
+    "multiclass_nms",
+    "multi_apply",
+    "unmap",
+    "select_single_mlvl",
+    "filter_scores_and_topk",
+]

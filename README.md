@@ -26,7 +26,79 @@ Additionally, we provide archive files of two widely-used datasets, [ImageNetVID
 |     **STPN**      | Swin-T |  85.2 | 64.1 | 84.1 | 91.4 | [config](configs/vid/stpn), [model](https://huggingface.co/guanxiongsun/vfe.pytorch/tree/main/work_dirs/stpn_swint_adam_9x), [paper](https://arxiv.org/abs/2402.02574)|
 
 
-## Installation
+## Pure-PyTorch stack (`vfe/`, no mmcv / mmdet)
+
+The `vfe/` package reimplements MAMBA and STPN — model, data pipeline, evaluator, and
+training loop — in plain PyTorch. Nothing from mmcv, mmdet or mmengine is imported at
+runtime. Every part was ported against the original code and checked tensor by tensor;
+`REWRITE_PLAN.md` records the checks, the findings and the reproduction runs.
+
+Reproduced on ImageNet VID val (4× GH200, AP50):
+
+| | released checkpoint | trained with `vfe` | original |
+| :-- | :--: | :--: | :--: |
+| MAMBA | 83.80 | 84.06 | 83.82 |
+| STPN | 85.15 | 84.54 | 85.15 |
+
+MAMBA's training reproduces the *published model's* schedule: epochs 1–3 at batch 4
+(4 GPUs, one image each), then epochs 4–6 at batch 8. Reading the config literally
+(batch 8 throughout) trains on half as many steps in epochs 1–3 and gives 83.16.
+
+### Install
+
+```bash
+uv venv --python 3.12 && uv sync          # uv.lock pins torch 2.10.0+cu128
+# or: pip install -e . --extra-index-url https://download.pytorch.org/whl/cu128
+```
+
+Data goes where it always did, under `data/ILSVRC/` (see *Data preparation* below).
+
+### Evaluate
+
+```bash
+# single GPU
+python -m vfe.cli.test configs/vid/mamba/mamba_r101_dc5_6x.py CHECKPOINT --work-dir WORK_DIR
+
+# one node, several GPUs
+torchrun --standalone --nproc_per_node=4 -m vfe.cli.test CONFIG CHECKPOINT \
+    --launcher pytorch --work-dir WORK_DIR
+```
+
+### Train
+
+```bash
+torchrun --standalone --nproc_per_node=4 -m vfe.cli.train CONFIG \
+    --launcher pytorch --accumulate 2 --work-dir WORK_DIR --seed 1466607766
+```
+
+`--accumulate k` runs `k` micro-steps per GPU, so `n` GPUs train exactly as `n * k` did:
+each micro-step gets its own data loader and random streams, mirroring one original rank.
+Four GPUs with `--accumulate 2` therefore reproduce the original eight-GPU batch, at the
+same speed per iteration. Runs write mmcv-format checkpoints and `*.log.json` logs, so
+`tools/analyze_train_log.py --compare` can overlay them on the original runs' logs, and
+`--resume-from auto` continues a run exactly, generator states included.
+
+Slurm scripts for Isambard-AI (data staging, evaluation, training) live in `tools/isambard/`.
+
+### Tests and parity checks
+
+```bash
+python -m pytest tests/vfe                 # fast unit tests; no data, no legacy env
+```
+
+The equivalence checks in `tools/checks/` run the same inputs through both stacks and
+compare them, so they need the original environment below as the reference oracle:
+
+```bash
+conda run -n vfe --no-capture-output python tools/checks/parity_vid_test.py --impl mmdet --ckpt CKPT --out A.pt
+python tools/checks/parity_vid_test.py --impl vfe --ckpt CKPT --out B.pt
+python tools/checks/parity_vid_test.py --compare A.pt B.pt
+```
+
+## Installation (original mmcv / mmdet stack)
+
+The environment below runs the original implementation in `mmdet/`. It is kept as the
+reference the pure-PyTorch port is checked against; it is not needed to use `vfe/`.
 The code are tested with the following environments:
 
 ### Tested environments:

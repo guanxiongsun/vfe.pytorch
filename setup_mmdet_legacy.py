@@ -1,5 +1,12 @@
 #!/usr/bin/env python
 # Copyright (c) OpenMMLab. All rights reserved.
+#
+# NOTE: this was `setup.py`. It only builds the LEGACY vendored mmdetection
+# 2.19.1 tree (`mmdet/`), which is kept as a reference oracle during the
+# pure-PyTorch rewrite; see REWRITE_PLAN.md. It is renamed so that setuptools
+# does not pick it up for the new `vfe` package declared in `pyproject.toml`.
+# To rebuild the legacy `vfe` conda env:
+#     conda run -n vfe python setup_mmdet_legacy.py develop --no-deps
 import os
 import os.path as osp
 import platform
