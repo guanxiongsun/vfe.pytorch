@@ -80,6 +80,14 @@ extend-exclude = [
 select = ["E", "F", "I", "UP", "B"]
 ignore = ["E501", "B008"]
 
+# tools/checks/ is run by BOTH interpreters: the new one and the legacy Python
+# 3.8 conda env that is the parity oracle. Left alone, `ruff --fix` rewrites
+# their annotations to 3.10+ syntax (`list[int]`, `X | None`), which 3.8 cannot
+# parse -- the harnesses would stop importing in the very env they exist to
+# query. CI re-checks this with `python3.8 -m compileall tools/checks/`.
+[tool.ruff.lint.per-file-ignores]
+"tools/checks/*" = ["UP006", "UP007", "UP035", "UP045"]
+
 # ---------------------------------------------------------------------------
 # uv configuration
 # ---------------------------------------------------------------------------

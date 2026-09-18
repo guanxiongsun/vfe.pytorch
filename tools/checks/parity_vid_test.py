@@ -3,7 +3,7 @@
 Runs a released checkpoint (MAMBA by default; ``--config`` selects another
 model, e.g. STPN) over the first ``--videos`` val videos in
 test order on each stack (mmdet: ``MMDataParallel`` + mmcv collate; vfe:
-``vfe.apis.single_gpu_test`` + ``collate_video_test``) and compares every
+``vfe.engine.single_gpu_test`` + ``collate_video_test``) and compares every
 frame's detections as a set (``parity_detector.match_detections``). This is
 the first check with real images *and* trained weights, and the memory state
 carries across hundreds of frames.
@@ -89,7 +89,7 @@ def run(impl, config, ckpt, videos, min_score):
             with torch.no_grad():
                 results.extend(model(return_loss=False, rescale=True, **data))
     else:
-        from vfe.apis import single_gpu_test
+        from vfe.engine import single_gpu_test
 
         results = single_gpu_test(model.cuda(), loader, torch.device("cuda"))
     print(f"{impl}: {len(results)} frames in {time.time() - start:.0f}s")

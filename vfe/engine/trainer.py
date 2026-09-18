@@ -53,18 +53,19 @@ from torch.nn.modules.batchnorm import _BatchNorm
 from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader
 
-from vfe.apis.test import (
+from vfe.datasets import build_dataset, collate_video_test
+from vfe.datasets.loader import build_train_loaders
+from vfe.datasets.samplers import DistributedVideoSampler
+from vfe.engine.checkpoint import resume_checkpoint, save_checkpoint
+from vfe.engine.evaluator import (
     evaluation_kwargs,
     make_tmpdir,
     multi_gpu_test,
     single_gpu_test,
     to_device,
 )
-from vfe.datasets import build_dataset, collate_video_test
-from vfe.datasets.loader import build_train_loaders
-from vfe.datasets.samplers import DistributedVideoSampler
-from vfe.engine import build_lr_scheduler, build_optimizer, clip_grads
-from vfe.engine.checkpoint import resume_checkpoint, save_checkpoint
+from vfe.engine.lr_scheduler import build_lr_scheduler
+from vfe.engine.optimizer import build_optimizer, clip_grads
 from vfe.engine.train_log import LogBuffer, TrainLogger
 from vfe.models.checkpoint import load_checkpoint
 from vfe.models.detectors.base import parse_losses

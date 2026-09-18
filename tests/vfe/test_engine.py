@@ -8,11 +8,11 @@ import pytest
 import torch
 from torch import nn
 
-from vfe.apis.test import evaluation_kwargs
-from vfe.apis.train import RngStreams, rescaled_iteration, train_step
 from vfe.engine import StepLrScheduler, clip_grads
 from vfe.engine.checkpoint import resume_checkpoint, save_checkpoint
+from vfe.engine.evaluator import evaluation_kwargs
 from vfe.engine.train_log import LogBuffer
+from vfe.engine.trainer import RngStreams, rescaled_iteration, train_step
 
 
 def test_log_buffer_weighted_average_of_last_n():

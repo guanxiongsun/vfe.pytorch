@@ -5,7 +5,7 @@ Single process::
     python -m vfe.cli.train CONFIG --work-dir DIR --seed N
 
 One node, several GPUs (``--accumulate k`` with ``n`` processes trains as
-``n * k`` GPUs did; see :mod:`vfe.apis.train`)::
+``n * k`` GPUs did; see :mod:`vfe.engine.trainer`)::
 
     torchrun --standalone --nproc_per_node=4 -m vfe.cli.train CONFIG \\
         --launcher pytorch --accumulate 2 --work-dir DIR --seed N
@@ -33,10 +33,10 @@ import numpy as np
 import torch
 import torch.distributed as dist
 
-from vfe.apis.train import train_detector
 from vfe.config import Config, parse_cfg_options
 from vfe.datasets import build_dataset
 from vfe.engine.train_log import collect_env, get_logger
+from vfe.engine.trainer import train_detector
 from vfe.models.builder import build_model
 from vfe.utils import get_dist_info, init_dist
 

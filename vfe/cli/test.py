@@ -28,10 +28,10 @@ import time
 import torch
 from torch.utils.data import DataLoader, Subset
 
-from vfe.apis import evaluation_kwargs, make_tmpdir, multi_gpu_test, single_gpu_test
 from vfe.config import Config
 from vfe.datasets import build_dataset, collate_video_test
 from vfe.datasets.samplers import DistributedVideoSampler
+from vfe.engine import evaluation_kwargs, make_tmpdir, multi_gpu_test, single_gpu_test
 from vfe.models.builder import build_model
 from vfe.models.checkpoint import load_checkpoint
 from vfe.utils import get_dist_info, init_dist
