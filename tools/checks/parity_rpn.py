@@ -133,7 +133,6 @@ def run(impl, device):
     # survive the mmdet side. Each impl gets its own.
     if impl == "mmdet":
         from mmcv import ConfigDict
-
         from mmdet.models import build_head
     else:
         sys.path.insert(0, str(REPO_ROOT))

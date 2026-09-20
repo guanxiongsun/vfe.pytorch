@@ -65,7 +65,6 @@ def build(impl):
     if impl == "mmdet":
         from mmcv import Config
         from mmcv.parallel import collate, scatter
-
         from mmdet.datasets import build_dataset
 
         dataset = build_dataset(Config.fromfile(str(CONFIG)).data.test)

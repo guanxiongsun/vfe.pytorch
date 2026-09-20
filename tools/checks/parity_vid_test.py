@@ -54,7 +54,6 @@ def run(impl, config, ckpt, videos, min_score):
         from mmcv import Config
         from mmcv.parallel import MMDataParallel, collate
         from mmcv.runner import load_checkpoint
-
         from mmdet.datasets import build_dataset
         from mmdet.models import build_model
 

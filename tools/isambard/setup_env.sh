@@ -4,7 +4,7 @@
 # Run from the repo root on a LOGIN node:
 #     bash tools/isambard/setup_env.sh
 #
-# Notes for this machine (see REWRITE_PLAN.md "Training target"):
+# Notes for this machine (see docs/rewrite-plan.md "Training target"):
 #   * Isambard's driver is 565.57.01 -> CUDA 12.7 native. We pin torch 2.10.0
 #     +cu128, which runs on any >=12.0 driver (CUDA minor version
 #     compatibility). Do NOT jump to torch 2.11+, which is CUDA 13.

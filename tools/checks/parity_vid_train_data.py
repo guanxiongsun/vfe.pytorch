@@ -69,7 +69,6 @@ def build(impl, select=None, config=CONFIG):
         patch_legacy_det_coco()
         from mmcv import Config
         from mmcv.parallel import DataContainer, collate
-
         from mmdet.datasets import build_dataset
         from mmdet.datasets.samplers import DistributedGroupSampler, GroupSampler
 

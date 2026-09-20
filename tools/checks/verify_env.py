@@ -10,10 +10,9 @@ import traceback
 from pathlib import Path
 
 import mmcv
+import mmdet
 import torch
 from mmcv import Config
-
-import mmdet
 from mmdet.models import build_detector
 
 REPO_ROOT = Path(__file__).resolve().parents[2]

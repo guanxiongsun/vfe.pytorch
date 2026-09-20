@@ -63,8 +63,6 @@ instance/
 .scrapy
 
 # Sphinx documentation
-docs/en/_build/
-docs/zh_cn/_build/
 
 # PyBuilder
 target/
@@ -112,8 +110,6 @@ data
 # custom
 *.pkl
 *.pkl.json
-docs/modelzoo_statistics.md
-mmdet/.mim
 work_dirs/
 
 # Python

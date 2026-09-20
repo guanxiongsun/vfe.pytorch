@@ -51,7 +51,6 @@ def run(impl):
         from mmcv import Config
         from mmcv.runner import build_optimizer
         from mmcv.runner.hooks.lr_updater import StepLrUpdaterHook
-
         from mmdet.models import build_detector, build_model
 
         class Runner:

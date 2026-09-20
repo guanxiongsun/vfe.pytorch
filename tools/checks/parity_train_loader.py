@@ -41,9 +41,8 @@ PROCESSES, ACCUMULATE = 4, 2  # vfe layout: 4 processes x 2 micro-steps = 8 virt
 
 def loader_for(impl, dataset, rank):
     if impl == "mmdet":
-        from mmcv.parallel import DataContainer
-
         import mmdet.datasets.builder as builder
+        from mmcv.parallel import DataContainer
 
         builder.get_dist_info = lambda: (rank, PROCESSES * ACCUMULATE)
         loader = builder.build_dataloader(dataset, 1, WORKERS, num_gpus=1, dist=True, seed=SEED,

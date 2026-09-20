@@ -241,7 +241,6 @@ def put_result(out, prefix, bbox_result):
 def run(impl, device):
     if impl == "mmdet":
         from mmcv import ConfigDict
-
         from mmdet.core import bbox2roi
         from mmdet.models import build_head
     else:

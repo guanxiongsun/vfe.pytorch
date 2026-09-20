@@ -55,7 +55,6 @@ def frame_meta(frame_id, frame_stride, num_left=NUM_LEFT):
 def run(impl, device):
     if impl == "mmdet":
         from mmcv import Config
-
         from mmdet.models import build_model
         from mmdet.models.aggregators import MambaAggregator
         from mmdet.models.memory import MemoryBank

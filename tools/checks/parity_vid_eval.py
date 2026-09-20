@@ -50,7 +50,6 @@ def encode_str(s):
 def build_dataset(impl):
     if impl == "mmdet":
         from mmcv import Config
-
         from mmdet.datasets import build_dataset as mm_build
 
         cfg = Config.fromfile(str(CONFIG))
