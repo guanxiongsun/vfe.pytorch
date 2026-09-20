@@ -690,9 +690,10 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="command")
 
-    def common(p, all_default=False):
+    def common(p):
         p.add_argument("variants", nargs="*", help="variant or harness names (default: --all)")
-        p.add_argument("--all", action="store_true", default=all_default)
+        p.add_argument("--all", action="store_true",
+                       help="every variant (the default when none is named)")
         p.add_argument("--mamba-ckpt")
         p.add_argument("--stpn-ckpt")
         p.add_argument("--scratch", help="where vfe-side artifacts go (default: a temp dir)")
@@ -715,7 +716,7 @@ def main():
                          help="a skipped variant is a failure")
 
     p_verify = sub.add_parser("verify", help="hashes only: are the goldens intact and current?")
-    common(p_verify, all_default=True)
+    common(p_verify)
 
     args = ap.parse_args()
     if not args.command:
