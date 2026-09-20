@@ -201,21 +201,21 @@
         "configs/vid/stpn/stpn_swint_adam_9x.py": "e2fc49b89c43b27cf7ab2911fe5fbd0d98fd479c12fb0264237eaa7afd0143ae"
       },
       "sources": {
-        "parity_detector.py": "3aafdfe75c549855e3a52dfd5a37788a2efb4d6ef03484298f41caa36c3a7788"
+        "parity_detector.py": "5ca2d6eaf56eb1202eacd67b328636012c6553152362cfa3b9f81311f9dabbbd"
       }
     },
-    "frozen_at": "2026-09-20 20:28:45",
+    "frozen_at": "2026-09-20 20:37:43",
     "legacy_commit": "a44d8471b4a28e68f9329d349d52db5363f3c488",
     "legacy_root": "/home/guanxiong/code/vfe.legacy",
     "note": "FasterRCNN from the real configs",
-    "repo_commit": "b69c2da45bba6ffe1ad3ebc28219be771e768093",
+    "repo_commit": "56ffe9664deee7cc2932f6ee4c496722516fad28",
     "requires": [
       "hub_resnet101"
     ],
     "seconds": {
-      "compare": 1.4,
-      "legacy": 17.0,
-      "vfe": 12.7
+      "compare": 1.5,
+      "legacy": 20.5,
+      "vfe": 12.8
     },
     "status": "OK",
     "summary": "DETECTOR PARITY OK (799 artifacts)"
@@ -244,22 +244,22 @@
         "configs/vid/stpn/stpn_swint_adam_9x.py": "e2fc49b89c43b27cf7ab2911fe5fbd0d98fd479c12fb0264237eaa7afd0143ae"
       },
       "sources": {
-        "parity_detector.py": "3aafdfe75c549855e3a52dfd5a37788a2efb4d6ef03484298f41caa36c3a7788"
+        "parity_detector.py": "5ca2d6eaf56eb1202eacd67b328636012c6553152362cfa3b9f81311f9dabbbd"
       }
     },
-    "frozen_at": "2026-09-20 20:29:09",
+    "frozen_at": "2026-09-20 20:38:10",
     "legacy_commit": "a44d8471b4a28e68f9329d349d52db5363f3c488",
     "legacy_root": "/home/guanxiong/code/vfe.legacy",
     "note": "FasterRCNN from the real configs",
-    "repo_commit": "b69c2da45bba6ffe1ad3ebc28219be771e768093",
+    "repo_commit": "56ffe9664deee7cc2932f6ee4c496722516fad28",
     "requires": [
       "cuda",
       "hub_resnet101"
     ],
     "seconds": {
-      "compare": 1.6,
-      "legacy": 13.8,
-      "vfe": 8.5
+      "compare": 1.4,
+      "legacy": 17.3,
+      "vfe": 8.1
     },
     "status": "OK",
     "summary": "DETECTOR PARITY OK (789 artifacts)"
@@ -355,22 +355,22 @@
         "configs/vid/mamba/mamba_r101_dc5_6x.py": "0e8b42c52837860d32e3df20c1bff460ea3b92a6717dd79245ed4a7ea2fc8078"
       },
       "sources": {
-        "parity_detector.py": "3aafdfe75c549855e3a52dfd5a37788a2efb4d6ef03484298f41caa36c3a7788",
-        "parity_mamba.py": "78680c6e6286f1de3e7bf85c5179ade01a3635887140ce7bc560f34de262ddb2"
+        "parity_detector.py": "5ca2d6eaf56eb1202eacd67b328636012c6553152362cfa3b9f81311f9dabbbd",
+        "parity_mamba.py": "21b749da660b781af05087b274b9315f235c6394dc2d4056e70ba7321596ebc1"
       }
     },
-    "frozen_at": "2026-09-20 20:30:03",
+    "frozen_at": "2026-09-20 20:39:02",
     "legacy_commit": "a44d8471b4a28e68f9329d349d52db5363f3c488",
     "legacy_root": "/home/guanxiong/code/vfe.legacy",
     "note": "memory bank, aggregators, stateful test",
-    "repo_commit": "b69c2da45bba6ffe1ad3ebc28219be771e768093",
+    "repo_commit": "56ffe9664deee7cc2932f6ee4c496722516fad28",
     "requires": [
       "hub_resnet101"
     ],
     "seconds": {
-      "compare": 1.2,
-      "legacy": 28.0,
-      "vfe": 24.7
+      "compare": 1.1,
+      "legacy": 26.9,
+      "vfe": 24.0
     },
     "status": "OK",
     "summary": "MAMBA PARITY OK (647 artifacts)"
@@ -398,23 +398,23 @@
         "configs/vid/mamba/mamba_r101_dc5_6x.py": "0e8b42c52837860d32e3df20c1bff460ea3b92a6717dd79245ed4a7ea2fc8078"
       },
       "sources": {
-        "parity_detector.py": "3aafdfe75c549855e3a52dfd5a37788a2efb4d6ef03484298f41caa36c3a7788",
-        "parity_mamba.py": "78680c6e6286f1de3e7bf85c5179ade01a3635887140ce7bc560f34de262ddb2"
+        "parity_detector.py": "5ca2d6eaf56eb1202eacd67b328636012c6553152362cfa3b9f81311f9dabbbd",
+        "parity_mamba.py": "21b749da660b781af05087b274b9315f235c6394dc2d4056e70ba7321596ebc1"
       }
     },
-    "frozen_at": "2026-09-20 20:30:24",
+    "frozen_at": "2026-09-20 20:39:23",
     "legacy_commit": "a44d8471b4a28e68f9329d349d52db5363f3c488",
     "legacy_root": "/home/guanxiong/code/vfe.legacy",
     "note": "memory bank, aggregators, stateful test",
-    "repo_commit": "b69c2da45bba6ffe1ad3ebc28219be771e768093",
+    "repo_commit": "56ffe9664deee7cc2932f6ee4c496722516fad28",
     "requires": [
       "cuda",
       "hub_resnet101"
     ],
     "seconds": {
-      "compare": 1.2,
-      "legacy": 12.8,
-      "vfe": 7.0
+      "compare": 1.1,
+      "legacy": 12.5,
+      "vfe": 6.6
     },
     "status": "OK",
     "summary": "MAMBA PARITY OK (632 artifacts)"
@@ -511,22 +511,22 @@
         "configs/vid/stpn/stpn_swint_adam_9x.py": "e2fc49b89c43b27cf7ab2911fe5fbd0d98fd479c12fb0264237eaa7afd0143ae"
       },
       "sources": {
-        "parity_detector.py": "3aafdfe75c549855e3a52dfd5a37788a2efb4d6ef03484298f41caa36c3a7788",
-        "parity_optim.py": "18a90b7caed9eae1c281bbf21ecfe8fba50bcf12348e8b31fc6ea370cdc5552d"
+        "parity_detector.py": "5ca2d6eaf56eb1202eacd67b328636012c6553152362cfa3b9f81311f9dabbbd",
+        "parity_optim.py": "c83c45dd5ff147a172e3c0faa5657d0084acd6f4042ae68d22b8566a44cdf46a"
       }
     },
-    "frozen_at": "2026-09-20 20:30:39",
+    "frozen_at": "2026-09-20 20:39:32",
     "legacy_commit": "a44d8471b4a28e68f9329d349d52db5363f3c488",
     "legacy_root": "/home/guanxiong/code/vfe.legacy",
     "note": "per-parameter optimiser settings",
-    "repo_commit": "b69c2da45bba6ffe1ad3ebc28219be771e768093",
+    "repo_commit": "56ffe9664deee7cc2932f6ee4c496722516fad28",
     "requires": [
       "hub_resnet101"
     ],
     "seconds": {
       "compare": 1.1,
-      "legacy": 9.7,
-      "vfe": 4.5
+      "legacy": 5.5,
+      "vfe": 2.7
     },
     "status": "OK",
     "summary": "OPTIM PARITY OK (6 artifacts, all exact)"
@@ -555,19 +555,19 @@
         "configs/vid/stpn/stpn_swint_adam_9x.py": "e2fc49b89c43b27cf7ab2911fe5fbd0d98fd479c12fb0264237eaa7afd0143ae"
       },
       "sources": {
-        "parity_roi_head.py": "43c5dc13dfd6606752fb5b6092f48b24b5cce90327169ec4ed8ef2d269e58597"
+        "parity_roi_head.py": "5fba562acae740cf3f4f3414ab6a34141caffa78b7da14a2db066f3e9132d5eb"
       }
     },
-    "frozen_at": "2026-09-20 20:27:52",
+    "frozen_at": "2026-09-20 20:36:15",
     "legacy_commit": "a44d8471b4a28e68f9329d349d52db5363f3c488",
     "legacy_root": "/home/guanxiong/code/vfe.legacy",
     "note": "",
-    "repo_commit": "b69c2da45bba6ffe1ad3ebc28219be771e768093",
+    "repo_commit": "56ffe9664deee7cc2932f6ee4c496722516fad28",
     "requires": [],
     "seconds": {
-      "compare": 3.0,
-      "legacy": 33.1,
-      "vfe": 17.9
+      "compare": 3.3,
+      "legacy": 26.7,
+      "vfe": 32.9
     },
     "status": "OK",
     "summary": "ROI HEAD PARITY OK (268 artifacts)"
@@ -576,7 +576,7 @@
     "artifact": {
       "bytes": 1305602137,
       "path": ".parity-golden/roi_head_cuda.pt",
-      "sha256": "942a4b2b591a57977dfe014161399eec8fe833c661945051458148233222cf7d"
+      "sha256": "83ff04b913c9f53ea0cc840bb1af1f2c7b7a06ce2849d3b181696db71e1474f3"
     },
     "checkpoints": {},
     "command": "conda run -n vfe --no-capture-output python /home/guanxiong/code/vfe.pytorch/tools/checks/parity_roi_head.py --impl mmdet --device cuda --out /home/guanxiong/code/vfe.pytorch/.parity-golden/roi_head_cuda.pt",
@@ -598,21 +598,21 @@
         "configs/vid/stpn/stpn_swint_adam_9x.py": "e2fc49b89c43b27cf7ab2911fe5fbd0d98fd479c12fb0264237eaa7afd0143ae"
       },
       "sources": {
-        "parity_roi_head.py": "43c5dc13dfd6606752fb5b6092f48b24b5cce90327169ec4ed8ef2d269e58597"
+        "parity_roi_head.py": "5fba562acae740cf3f4f3414ab6a34141caffa78b7da14a2db066f3e9132d5eb"
       }
     },
-    "frozen_at": "2026-09-20 20:28:13",
+    "frozen_at": "2026-09-20 20:37:08",
     "legacy_commit": "a44d8471b4a28e68f9329d349d52db5363f3c488",
     "legacy_root": "/home/guanxiong/code/vfe.legacy",
     "note": "",
-    "repo_commit": "b69c2da45bba6ffe1ad3ebc28219be771e768093",
+    "repo_commit": "56ffe9664deee7cc2932f6ee4c496722516fad28",
     "requires": [
       "cuda"
     ],
     "seconds": {
       "compare": 2.7,
-      "legacy": 12.7,
-      "vfe": 5.8
+      "legacy": 24.8,
+      "vfe": 22.8
     },
     "status": "OK",
     "summary": "ROI HEAD PARITY OK (178 artifacts)"
@@ -641,18 +641,18 @@
         "configs/vid/stpn/stpn_swint_adam_9x.py": "e2fc49b89c43b27cf7ab2911fe5fbd0d98fd479c12fb0264237eaa7afd0143ae"
       },
       "sources": {
-        "parity_rpn.py": "6d042b80bdbafebda18163ac3b6e032ff5ff0648520fbf8dbe481b1b6022bc83"
+        "parity_rpn.py": "32c11c05a23fc0a9abb86edc4249779c90161f94c832f9cc0d33424f72fabb73"
       }
     },
-    "frozen_at": "2026-09-20 20:26:46",
+    "frozen_at": "2026-09-20 20:34:53",
     "legacy_commit": "a44d8471b4a28e68f9329d349d52db5363f3c488",
     "legacy_root": "/home/guanxiong/code/vfe.legacy",
     "note": "",
-    "repo_commit": "b69c2da45bba6ffe1ad3ebc28219be771e768093",
+    "repo_commit": "56ffe9664deee7cc2932f6ee4c496722516fad28",
     "requires": [],
     "seconds": {
       "compare": 1.1,
-      "legacy": 4.0,
+      "legacy": 3.9,
       "vfe": 2.6
     },
     "status": "OK",
@@ -682,21 +682,21 @@
         "configs/vid/stpn/stpn_swint_adam_9x.py": "e2fc49b89c43b27cf7ab2911fe5fbd0d98fd479c12fb0264237eaa7afd0143ae"
       },
       "sources": {
-        "parity_rpn.py": "6d042b80bdbafebda18163ac3b6e032ff5ff0648520fbf8dbe481b1b6022bc83"
+        "parity_rpn.py": "32c11c05a23fc0a9abb86edc4249779c90161f94c832f9cc0d33424f72fabb73"
       }
     },
-    "frozen_at": "2026-09-20 20:26:58",
+    "frozen_at": "2026-09-20 20:35:10",
     "legacy_commit": "a44d8471b4a28e68f9329d349d52db5363f3c488",
     "legacy_root": "/home/guanxiong/code/vfe.legacy",
     "note": "",
-    "repo_commit": "b69c2da45bba6ffe1ad3ebc28219be771e768093",
+    "repo_commit": "56ffe9664deee7cc2932f6ee4c496722516fad28",
     "requires": [
       "cuda"
     ],
     "seconds": {
       "compare": 1.1,
-      "legacy": 7.9,
-      "vfe": 2.7
+      "legacy": 9.5,
+      "vfe": 2.8
     },
     "status": "OK",
     "summary": "RPN PARITY OK (120 artifacts)"
