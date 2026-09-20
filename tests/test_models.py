@@ -10,7 +10,7 @@ from vfe.models.backbones import STPNSwinTransformer, SwinTransformer
 from vfe.models.builder import build_model
 from vfe.models.vid.stpn import AttentionPredictor
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 SWIN_T = dict(embed_dims=96, depths=[2, 2, 6, 2], num_heads=[3, 6, 12, 24], window_size=7,
               mlp_ratio=4, qkv_bias=True, drop_path_rate=0.0, patch_norm=True)

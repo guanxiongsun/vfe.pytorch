@@ -6,7 +6,7 @@ import pytest
 
 from vfe.config import Config, parse_cfg_options
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_parse_cfg_options_types():
