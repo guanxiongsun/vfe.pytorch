@@ -497,7 +497,10 @@ def selected(args):
 def preflight(args, variants):
     """Refuse to start a freeze that would be wasted, or dangerous."""
     problems = []
-    rc = subprocess.call(["git", "-C", str(REPO_ROOT), "check-ignore", "-q", ".parity-golden"])
+    # Trailing slash: the pattern is a directory pattern, and git only matches
+    # it against a path it can tell is a directory -- which, before the first
+    # freeze, this one is not.
+    rc = subprocess.call(["git", "-C", str(REPO_ROOT), "check-ignore", "-q", ".parity-golden/"])
     if rc != 0:
         problems.append(".parity-golden/ is not git-ignored -- it holds gigabytes")
     free_gb = shutil.disk_usage(str(REPO_ROOT)).free / 1e9
