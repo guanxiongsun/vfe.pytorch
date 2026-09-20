@@ -29,6 +29,7 @@ Usage:
 """
 
 import argparse
+import os
 import sys
 import time
 
@@ -47,11 +48,35 @@ def encode_str(s):
     return torch.tensor(list(s.encode()), dtype=torch.uint8)
 
 
+def patch_legacy_motion_iou():
+    """Point mmdet's VID evaluator at the legacy tree's motion-IoU table.
+
+    ``eval_detection_vid`` loads it from the *relative* path
+    "mmdet/datasets/mamba/vid_groundtruth_motion_iou.mat", which resolved only
+    while the working directory happened to contain the mmdet tree. It is a
+    local variable, not an argument, so the redirect goes through the one
+    ``scipy.io`` call that reads it.
+    """
+    from mmdet.datasets.mamba import vid_eval as legacy
+
+    real_loadmat = legacy.sio.loadmat
+
+    class RedirectedScipyIO:
+        @staticmethod
+        def loadmat(path, *args, **kwargs):
+            if not os.path.isabs(str(path)) and str(path).endswith(MOTION_IOU_MAT):
+                path = str(_legacy.legacy_file(MOTION_IOU_MAT))
+            return real_loadmat(path, *args, **kwargs)
+
+    legacy.sio = RedirectedScipyIO
+
+
 def build_dataset(impl):
     if impl == "mmdet":
         from mmcv import Config
         from mmdet.datasets import build_dataset as mm_build
 
+        patch_legacy_motion_iou()
         cfg = Config.fromfile(str(CONFIG))
         return mm_build(cfg.data.test)
 
