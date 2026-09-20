@@ -1,5 +1,13 @@
 # vfe.pytorch — Pure-PyTorch Rewrite Plan
 
+> **Historical record.** This is the working document of the rewrite that
+> produced 2.0, kept as written rather than tidied up. It is the only place
+> many of the findings are recorded: why a tolerance is what it is, which bugs
+> the parity checks caught, what the original training logs say, and why the
+> legacy CUDA gradients are not trusted on this machine. For how to *run* the
+> parity checks today, see [parity.md](parity.md); for what 2.0 is, see the
+> [README](../README.md).
+
 Tracking doc for migrating this codebase off the mmlab stack (mmdet / mmcv / mmengine)
 to a **pure-PyTorch** implementation. Update the checkboxes and the Progress Log as work proceeds.
 

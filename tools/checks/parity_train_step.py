@@ -5,7 +5,7 @@ Each side builds the model from ``--config`` (MAMBA 6x by default; STPN with
 takes two optimiser steps on real VID training samples, built by its own data
 path from ``--data-config`` (default: the same config; ``parity_vid_train_data``
 shows the two data paths are bit-identical). CPU only: the legacy CUDA stack
-mis-computes some gradients (see REWRITE_PLAN.md).
+mis-computes some gradients (see docs/rewrite-plan.md).
 
 A step is what mmcv's runner did per iteration: ``train_step`` (forward_train
 and parse_losses), then ``OptimizerHook``: zero_grad, backward, gradient
@@ -345,7 +345,7 @@ def run(impl, config, data_config, checkpoint, threads, debug_param=None):
 
 # ---- comparison ------------------------------------------------------------------------
 
-# ||a - b|| / ||a|| allowed per kind. See REWRITE_PLAN.md (Phase 6c) for how
+# ||a - b|| / ||a|| allowed per kind. See docs/rewrite-plan.md (Phase 6c) for how
 # these were set: the stacks' CPU kernels differ by ~1e-6 relative per op, and
 # a ResNet-101 backward pass amplifies that.
 TOLERANCES = {

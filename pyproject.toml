@@ -1,11 +1,20 @@
 [project]
 name = "vfe"
-version = "0.1.0"
-description = "Video Feature Enhancement: pure-PyTorch implementations of MAMBA, STPN and SELSA for video object detection"
+dynamic = ["version"]                      # from vfe.__version__
+description = "Video Feature Enhancement: pure-PyTorch MAMBA and STPN for video object detection"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Guanxiong Sun", email = "sungx.cs@outlook.com" }]
+keywords = ["video object detection", "imagenet vid", "pytorch", "mamba", "stpn"]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
 
 # Hard pins: the *same* spec must resolve on x86_64 (local RTX 4060, sm_89) and
 # aarch64 (Isambard-AI GH200, sm_90). torch 2.10.0 is the newest release with
@@ -36,14 +45,25 @@ dev = [
 
 [project.urls]
 Homepage = "https://github.com/guanxiongsun/vfe.pytorch"
+Issues = "https://github.com/guanxiongsun/vfe.pytorch/issues"
+"Model zoo" = "https://huggingface.co/guanxiongsun/vfe.pytorch"
+"Paper (MAMBA)" = "https://arxiv.org/abs/2401.09923"
+"Paper (STPN)" = "https://arxiv.org/abs/2402.02574"
+
+# Single-process entry points. Distributed runs go through the modules
+# instead, because torchrun needs one: `torchrun ... -m vfe.cli.train`.
+[project.scripts]
+vfe-train = "vfe.cli.train:main"
+vfe-test = "vfe.cli.test:main"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools.dynamic]
+version = { attr = "vfe.__version__" }
+
 [tool.setuptools.packages.find]
-# Only the new pure-PyTorch package. The legacy `mmdet/` tree stays in the repo
-# as a reference oracle but is NOT part of this distribution.
 include = ["vfe*"]
 
 [tool.setuptools.package-data]
@@ -56,25 +76,19 @@ target-version = "py312"
 # The legacy mmdet tree, its configs and its tools are reference material -- they
 # are read, not edited, and linting them only drowns out findings in new code.
 extend-exclude = [
-  "mmdet",
-  "configs",
-  "docs",
-  ".dev_scripts",
-  # Everything under tools/ except the new tools/checks/ harness. The legacy
-  # scripts are listed by name: a "tools/*.py" glob also matches
-  # tools/checks/*.py (ruff's `*` crosses `/`), which silently excluded the
-  # whole harness from linting.
-  "tools/eval.py",
-  "tools/speed_test.py",
-  "tools/test.py",
-  "tools/train.py",
-  "tools/analysis_tools",
-  "tools/dataset_converters",
-  "tools/deployment",
-  "tools/misc",
-  "tools/model_converters",
-  "tools/result_converters",
+  # Data, outputs and frozen parity artifacts -- not source.
+  ".parity-golden",
+  "data",
+  "work_dirs",
 ]
+
+[tool.pytest.ini_options]
+# Fast, CPU-only unit tests: no legacy environment, no ImageNet VID data.
+# Equivalence with the original implementation is checked separately, by the
+# two-environment harnesses in tools/checks/ (see docs/parity.md).
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

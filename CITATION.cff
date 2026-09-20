@@ -1,8 +1,51 @@
 cff-version: 1.2.0
-message: "If you use this software, please cite it as below."
+message: "If you use this software, please cite the papers below."
+title: "vfe.pytorch: Video Feature Enhancement in PyTorch"
 authors:
-  - name: "MMDetection Contributors"
-title: "OpenMMLab Detection Toolbox and Benchmark"
-date-released: 2018-08-22
-url: "https://github.com/open-mmlab/mmdetection"
+  - family-names: Sun
+    given-names: Guanxiong
+url: "https://github.com/guanxiongsun/vfe.pytorch"
 license: Apache-2.0
+repository-code: "https://github.com/guanxiongsun/vfe.pytorch"
+preferred-citation:
+  type: article
+  title: "MAMBA: Multi-level Aggregation via Memory Bank for Video Object Detection"
+  authors:
+    - family-names: Sun
+      given-names: Guanxiong
+    - family-names: Hua
+      given-names: Yang
+    - family-names: Hu
+      given-names: Guosheng
+    - family-names: Robertson
+      given-names: Neil
+  year: 2021
+  journal: "Proceedings of the AAAI Conference on Artificial Intelligence"
+  url: "https://arxiv.org/abs/2401.09923"
+references:
+  - type: article
+    title: "Spatio-temporal Prompting Network for Robust Video Feature Extraction"
+    authors:
+      - family-names: Sun
+        given-names: Guanxiong
+      - family-names: Wang
+        given-names: Chi
+      - family-names: Zhang
+        given-names: Zhaoyu
+      - family-names: Deng
+        given-names: Jiankang
+      - family-names: Zafeiriou
+        given-names: Stefanos
+      - family-names: Hua
+        given-names: Yang
+    year: 2023
+    conference:
+      name: "IEEE/CVF International Conference on Computer Vision (ICCV)"
+    url: "https://arxiv.org/abs/2402.02574"
+  - type: software
+    title: "MMDetection: OpenMMLab Detection Toolbox and Benchmark"
+    authors:
+      - name: "MMDetection Contributors"
+    year: 2018
+    url: "https://github.com/open-mmlab/mmdetection"
+    notes: "vfe/ is a derivative work of MMDetection 2.19.1; see NOTICE."

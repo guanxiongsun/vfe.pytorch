@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: [main, pure-pytorch-rewrite]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+# The parity checks are not here: they need the legacy Python 3.8 environment,
+# the ImageNet VID data and a GPU. They run on the machine that has all three
+# (see docs/parity.md). CI checks everything that does not.
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install (CPU torch; the pinned CUDA build has no runner)
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch==2.10.0 torchvision==0.25.0 \
+            --index-url https://download.pytorch.org/whl/cpu
+          pip install --no-deps -e .
+          pip install numpy pillow opencv-python-headless pycocotools pyyaml \
+            terminaltables tqdm pytest ruff build
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Unit tests
+        run: python -m pytest
+
+      - name: No mm* at runtime
+        run: |
+          python - <<'PY'
+          import sys, vfe, vfe.engine, vfe.datasets, vfe.models, vfe.evaluation
+          leaked = sorted({m.split('.')[0] for m in sys.modules} & {'mmcv', 'mmdet', 'mmengine'})
+          assert not leaked, f"the package imported {leaked}"
+          print("vfe", vfe.__version__, "imports nothing from mmlab")
+          PY
+
+      - name: Every config loads
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from vfe.config import Config
+          from vfe.models.builder import build_model
+          for path in sorted(Path("configs").rglob("*.py")):
+              if path.parent.name == "__pycache__":
+                  continue
+              cfg = Config.fromfile(str(path))
+              if "model" in cfg and path.parts[1] == "vid":
+                  n = sum(p.numel() for p in build_model(cfg.model).parameters())
+                  print(f"{path}: {n:,} parameters")
+              else:
+                  print(f"{path}: loaded")
+          PY
+
+      - name: CLI entry points
+        run: |
+          python -m vfe.cli.train --help > /dev/null
+          python -m vfe.cli.test --help > /dev/null
+          vfe-train --help > /dev/null
+          vfe-test --help > /dev/null
+
+      - name: Build, and check what is in the sdist
+        run: |
+          python -m build
+          python - <<'PY'
+          import tarfile, glob
+          sdist = glob.glob("dist/*.tar.gz")[0]
+          names = tarfile.open(sdist).getnames()
+          mm = [n for n in names if "/mmdet" in n or "/configs/archive" in n]
+          assert not mm, f"the legacy tree leaked into the sdist: {mm[:5]}"
+          npz = [n for n in names if n.endswith("vid_motion_iou.npz")]
+          assert len(npz) == 1, f"the evaluator's motion-IoU table is missing: {npz}"
+          print(f"{sdist}: {len(names)} files, no mmdet, motion table present")
+          PY
+
+      - name: The golden manifest covers the matrix
+        run: python tools/checks/run_parity.py list --check-manifest
+
+  # tools/checks/ is executed by the legacy Python 3.8 environment as well as
+  # by this one, so nothing there may use newer syntax.
+  python38-syntax:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.8"
+      - run: python -m compileall -q tools/checks/
+
+  lockfile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv lock --check

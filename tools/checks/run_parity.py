@@ -372,8 +372,15 @@ def tail(log_path, n=25):
 # ---------------------------------------------------------------------------
 
 def load_manifest():
-    if MANIFEST.is_file():
-        return json.loads(MANIFEST.read_text())
+    """The local manifest, or the tracked copy in a checkout that has no goldens.
+
+    The tracked copy records what was frozen without the artifacts, so `list`
+    and `verify` still say something useful in a fresh clone -- `staleness`
+    then reports the artifacts as gone, which is exactly what they are.
+    """
+    for path in (MANIFEST, PUBLISHED_MANIFEST):
+        if path.is_file():
+            return json.loads(path.read_text())
     return {}
 
 

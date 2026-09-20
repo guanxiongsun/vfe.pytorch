@@ -1,62 +1,89 @@
-# Video Feature Enhancement with PyTorch
+# vfe.pytorch — Video Feature Enhancement in PyTorch
 
-[![License](https://img.shields.io/badge/license-BSD-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-This repo contains the code for the paper:
-[MAMBA](https://arxiv.org/abs/2401.09923), [STPN](https://arxiv.org/abs/2402.02574), TDViT, EOVOD
+Video object detection on ImageNet VID, in plain PyTorch. This repository holds
+reference implementations of
 
+- **[MAMBA](https://arxiv.org/abs/2401.09923)** — Multi-level Aggregation via Memory Bank (AAAI 2021)
+- **[STPN](https://arxiv.org/abs/2402.02574)** — Spatio-temporal Prompting Network (ICCV 2023)
 
-Additionally, we provide archive files of two widely-used datasets, [ImageNetVID](https://huggingface.co/datasets/guanxiongsun/imagenetvid/tree/main) and GOT-10K. The official links of these datasets are not accessible or deleted. We hope these resources can help future research.
+together with the ImageNet VID data and annotations needed to train and
+evaluate them, since the official dataset links are no longer reachable.
 
-## Progress
+**Version 2.0 is a rewrite.** Up to 1.x this was a fork of MMDetection 2.19.1
+and needed `mmcv-full`, `mmdet` and a Python 3.8 environment pinned to PyTorch
+1.10. The `vfe/` package now implements everything it uses — models, data
+pipeline, evaluator, training loop, samplers, config system — on plain `torch`
+and `torchvision.ops`. Nothing from mmcv, mmdet or mmengine is imported at
+runtime, and the code runs on current PyTorch. See
+[what changed in 2.0](#what-changed-in-20).
 
-- [x] [MAMBA](https://arxiv.org/abs/2401.09923)
-- [x] [STPN](https://arxiv.org/abs/2402.02574)
-- [ ] TDViT
-- [ ] EOVOD
+## Results
 
-## Main Results
+ImageNet VID validation, AP50 and the standard motion-speed breakdown:
 
-|       Model        |  Backbone  | AP50 | AP (fast) | AP (med) | AP (slow) |                                             Link                                             |
-| :----------------: | :--------: | :--: | :-------: | :------: | :-------: | :------------------------------------------------------------------------------------------: |
-|     FasterRCNN     | ResNet-101 | 76.7 |   52.3    |   74.1   |   84.9    | [model](https://drive.google.com/file/d/1W17f9GC60rHU47lUeOEfU--Ra-LTw3Tq/view?usp=sharing), [reference](https://github.com/Scalsol/mega.pytorch/tree/master?tab=readme-ov-file#main-results)|
-|     SELSA          | ResNet-101 |  81.5  |    --     |    --    |    --     | [model](https://download.openmmlab.com/mmtracking/vid/selsa/selsa_faster_rcnn_r101_dc5_1x_imagenetvid/selsa_faster_rcnn_r101_dc5_1x_imagenetvid_20201218_172724-aa961bcc.pth), [reference](https://github.com/open-mmlab/mmtracking/tree/master/configs/vid/selsa) |
-|     MEGA     |   ResNet-101  |  82.9	|62.7	|81.6	|89.4  | [model](https://drive.google.com/file/d/1ZnAdFafF1vW9Lnpw-RPF1AD_csw61lBY/view?usp=sharing), [reference](https://github.com/Scalsol/mega.pytorch/tree/master) |
-|     **MAMBA**     | ResNet-101 |  83.8 | 65.3 | 83.8 | 89.5 | [config](configs/vid/mamba), [model](https://huggingface.co/guanxiongsun/vfe.pytorch/tree/main/work_dirs/mamba_r101_dc5_6x), [paper](https://arxiv.org/abs/2401.09923)|
-|     **STPN**      | Swin-T |  85.2 | 64.1 | 84.1 | 91.4 | [config](configs/vid/stpn), [model](https://huggingface.co/guanxiongsun/vfe.pytorch/tree/main/work_dirs/stpn_swint_adam_9x), [paper](https://arxiv.org/abs/2402.02574)|
+| Model | Backbone | AP50 | AP (fast) | AP (med) | AP (slow) | |
+| :-- | :-- | :--: | :--: | :--: | :--: | :-- |
+| Faster R-CNN | ResNet-101 | 76.7 | 52.3 | 74.1 | 84.9 | [reference](https://github.com/Scalsol/mega.pytorch#main-results) |
+| SELSA | ResNet-101 | 81.5 | — | — | — | [reference](https://github.com/open-mmlab/mmtracking/tree/master/configs/vid/selsa) |
+| MEGA | ResNet-101 | 82.9 | 62.7 | 81.6 | 89.4 | [reference](https://github.com/Scalsol/mega.pytorch) |
+| **MAMBA** | ResNet-101 | **83.8** | 65.3 | 83.8 | 89.5 | [config](configs/vid/mamba) · [model](https://huggingface.co/guanxiongsun/vfe.pytorch/tree/main/work_dirs/mamba_r101_dc5_6x) |
+| **STPN** | Swin-T | **85.2** | 64.1 | 84.1 | 91.4 | [config](configs/vid/stpn) · [model](https://huggingface.co/guanxiongsun/vfe.pytorch/tree/main/work_dirs/stpn_swint_adam_9x) |
 
+### Reproduced with this code
 
-## Pure-PyTorch stack (`vfe/`, no mmcv / mmdet)
+Measured on 4× GH200, AP50 on the same validation set:
 
-The `vfe/` package reimplements MAMBA and STPN — model, data pipeline, evaluator, and
-training loop — in plain PyTorch. Nothing from mmcv, mmdet or mmengine is imported at
-runtime. Every part was ported against the original code and checked tensor by tensor;
-`REWRITE_PLAN.md` records the checks, the findings and the reproduction runs.
-
-Reproduced on ImageNet VID val (4× GH200, AP50):
-
-| | released checkpoint | trained with `vfe` | original |
+| | released checkpoint, evaluated here | trained here, from scratch | originally published |
 | :-- | :--: | :--: | :--: |
 | MAMBA | 83.80 | 84.06 | 83.82 |
 | STPN | 85.15 | 84.54 | 85.15 |
 
-MAMBA's training reproduces the *published model's* schedule: epochs 1–3 at batch 4
-(4 GPUs, one image each), then epochs 4–6 at batch 8. Reading the config literally
-(batch 8 throughout) trains on half as many steps in epochs 1–3 and gives 83.16.
+Evaluation reproduces the released checkpoints to within 0.02 AP50. Training
+reproduces MAMBA and lands 0.61 low on STPN, with per-epoch losses within 0.6%
+of the original run — run-to-run variance, most likely, though that was not
+confirmed with a second seed.
 
-### Install
+> **MAMBA's schedule.** The published MAMBA model trained epochs 1–3 at batch 4
+> and epochs 4–6 at batch 8 (its checkpoint records a 4-GPU run resumed on 8,
+> and mmcv rescaled the iteration count). Reading the config literally — batch 8
+> throughout — halves the steps in epochs 1–3 and scores 83.16. The 84.06 above
+> follows the published model's own schedule.
+
+## Install
 
 ```bash
 uv venv --python 3.12 && uv sync          # uv.lock pins torch 2.10.0+cu128
-# or: pip install -e . --extra-index-url https://download.pytorch.org/whl/cu128
+# or
+pip install -e . --extra-index-url https://download.pytorch.org/whl/cu128
 ```
 
-Data goes where it always did, under `data/ILSVRC/` (see *Data preparation* below).
+PyPI's default aarch64 `torch` wheel is CPU-only, so the CUDA index matters on
+Arm machines (Isambard-AI, Grace Hopper) as well as on x86.
 
-### Evaluate
+## Data
+
+Download ILSVRC2015 DET and VID from
+[this mirror](https://huggingface.co/datasets/guanxiongsun/imagenetvid/tree/main)
+and the [COCO-style annotations](https://huggingface.co/datasets/guanxiongsun/imagenetvid/blob/main/annotations.tar.gz),
+then arrange (or symlink) them as:
+
+```
+data/ILSVRC/
+├── Annotations/{DET,VID}
+├── Data/{DET,VID}
+├── ImageSets
+└── annotations/          # imagenet_vid_{train,val}.json, imagenet_det_30plus1cls.json
+```
+
+The `ImageSets` lists come from
+[FGFA](https://github.com/msracver/Flow-Guided-Feature-Aggregation/tree/master/data/ILSVRC2015/ImageSets).
+
+## Evaluate
 
 ```bash
-# single GPU
+# one GPU
 python -m vfe.cli.test configs/vid/mamba/mamba_r101_dc5_6x.py CHECKPOINT --work-dir WORK_DIR
 
 # one node, several GPUs
@@ -64,196 +91,81 @@ torchrun --standalone --nproc_per_node=4 -m vfe.cli.test CONFIG CHECKPOINT \
     --launcher pytorch --work-dir WORK_DIR
 ```
 
-### Train
+Video detectors are evaluated one video per process: frames must arrive in
+order on the same process, which the sampler guarantees.
+
+## Train
 
 ```bash
 torchrun --standalone --nproc_per_node=4 -m vfe.cli.train CONFIG \
     --launcher pytorch --accumulate 2 --work-dir WORK_DIR --seed 1466607766
 ```
 
-`--accumulate k` runs `k` micro-steps per GPU, so `n` GPUs train exactly as `n * k` did:
-each micro-step gets its own data loader and random streams, mirroring one original rank.
-Four GPUs with `--accumulate 2` therefore reproduce the original eight-GPU batch, at the
-same speed per iteration. Runs write mmcv-format checkpoints and `*.log.json` logs, so
-`tools/analyze_train_log.py --compare` can overlay them on the original runs' logs, and
-`--resume-from auto` continues a run exactly, generator states included.
+`--accumulate k` runs `k` micro-steps per process, so `n` GPUs train exactly as
+`n * k` did: each micro-step gets its own data loader and its own random
+streams, mirroring one original rank. Four GPUs with `--accumulate 2` therefore
+reproduce the original eight-GPU batch, at the same speed per iteration. This is
+exact rather than approximate — halving a loss halves every gradient — provided
+no layer uses batch statistics, and the loop refuses to accumulate unless every
+BatchNorm is frozen.
 
-Slurm scripts for Isambard-AI (data staging, evaluation, training) live in `tools/isambard/`.
+Runs write checkpoints and `*.log.json` logs in the original format, so
+`tools/analyze_train_log.py --compare` can overlay a run on the original one,
+and `--resume-from auto` continues a run exactly, generator states included.
+Slurm scripts for Isambard-AI are in [tools/isambard/](tools/isambard/).
 
-### Tests and parity checks
-
-```bash
-python -m pytest tests/vfe                 # fast unit tests; no data, no legacy env
-```
-
-The equivalence checks in `tools/checks/` run the same inputs through both stacks and
-compare them, so they need the original environment below as the reference oracle:
+## Tests and parity
 
 ```bash
-conda run -n vfe --no-capture-output python tools/checks/parity_vid_test.py --impl mmdet --ckpt CKPT --out A.pt
-python tools/checks/parity_vid_test.py --impl vfe --ckpt CKPT --out B.pt
-python tools/checks/parity_vid_test.py --compare A.pt B.pt
+python -m pytest                       # 35 fast CPU tests, no data needed
+python tools/checks/run_parity.py check --all
 ```
 
-## Installation (original mmcv / mmdet stack)
+The second command re-runs every layer of the port against frozen outputs of
+the original implementation and compares them tensor by tensor. See
+[docs/parity.md](docs/parity.md) for how that works, what it does and does not
+claim, and how to rebuild the oracle.
 
-The environment below runs the original implementation in `mmdet/`. It is kept as the
-reference the pure-PyTorch port is checked against; it is not needed to use `vfe/`.
-The code are tested with the following environments:
+## What changed in 2.0
 
-### Tested environments:
+Version 1.x is preserved: `git checkout v1.0.0`, or browse the
+[`v1` branch](https://github.com/guanxiongsun/vfe.pytorch/tree/v1). Its
+environment is still the reference this rewrite is checked against.
 
-- python 3.8
-- pytorch 1.10.1
-- cuda 11.3
-- mmcv-full 1.3.17
+| 1.x | 2.0 |
+| :-- | :-- |
+| `python tools/train.py CONFIG` | `python -m vfe.cli.train CONFIG` (or `vfe-train`) |
+| `./tools/dist_train.sh CONFIG 8` | `torchrun --nproc_per_node=8 -m vfe.cli.train CONFIG --launcher pytorch` |
+| `python tools/test.py CONFIG --checkpoint CKPT --eval bbox` | `python -m vfe.cli.test CONFIG CKPT` |
+| `mmcv.Config` | `vfe.config.Config` (same syntax, `_base_` included) |
+| `mmdet.apis.train_detector` | `vfe.engine.train_detector` |
+| mmcv registry + `build_detector` | `vfe.models.build_model` |
+| python 3.8, torch 1.10, mmcv-full 1.3.17 | python 3.12, torch 2.10, no mm\* |
 
-### Option 1: Step-by-step installation
+Configs are unchanged: the same files load in both stacks and resolve
+identically, which is one of the parity checks.
 
-```bash
-conda create --name vfe -y python=3.8
-conda activate vfe
+Not carried over: SELSA and the single-frame baselines, fp16 training, and the
+MMDetection model zoo this was forked from — all still in `v1.0.0`.
 
-# install PyTorch with cuda support
-conda install pytorch==1.10.1 torchvision==0.11.2 torchaudio==0.10.1 cudatoolkit=11.3 -c pytorch -c conda-forge
+## Citation
 
-# install mmcv-full 1.3.17
-pip install mmcv-full==1.3.17 -f https://download.openmmlab.com/mmcv/dist/cu113/torch1.10/index.html
-
-# install other requirements
-pip install -r requirements.txt
-
-# install mmpycocotools
-pip install mmpycocotools
+```bibtex
+@inproceedings{sun2021mamba,
+  title     = {MAMBA: Multi-level Aggregation via Memory Bank for Video Object Detection},
+  author    = {Sun, Guanxiong and Hua, Yang and Hu, Guosheng and Robertson, Neil},
+  booktitle = {AAAI},
+  year      = {2021}
+}
+@inproceedings{sun2023stpn,
+  title     = {Spatio-temporal Prompting Network for Robust Video Feature Extraction},
+  author    = {Sun, Guanxiong and Wang, Chi and Zhang, Zhaoyu and Deng, Jiankang
+               and Zafeiriou, Stefanos and Hua, Yang},
+  booktitle = {ICCV},
+  year      = {2023}
+}
 ```
 
-See [here](https://github.com/open-mmlab/mmcv#installation) for different versions of MMCV compatible to different PyTorch and CUDA versions.
-
-## Data preparation
-
-### Download ImageNetVID (Video Object Detection) Dataset
-
-The original links of ImageNetVID dataset are either broken or unavailible. Here, we provide the new link to download the file for the furture reference of the community. Please download ILSVRC2015 DET and ILSVRC2015 VID datasets from this [LINK](https://huggingface.co/datasets/guanxiongsun/imagenetvid/tree/main). 
-
-After that, we recommend to symlink the path to the datasets to `datasets/`. And the path structure should be as follows:
-
-    ./data/ILSVRC/
-    ./data/ILSVRC/Annotations/DET
-    ./data/ILSVRC/Annotations/VID
-    ./data/ILSVRC/Data/DET
-    ./data/ILSVRC/Data/VID
-    ./data/ILSVRC/ImageSets
-
-**Note**: List txt files under `ImageSets` folder can be obtained from
-[here](https://github.com/msracver/Flow-Guided-Feature-Aggregation/tree/master/data/ILSVRC2015/ImageSets).
-
-### Convert Annotations
-
-We use [CocoVID](mmdet/datasets/parsers/coco_video_parser.py) to maintain datasets. 
-
-Option 1: Download and uncompress json file generated by us from [here](https://huggingface.co/datasets/guanxiongsun/imagenetvid/blob/main/annotations.tar.gz).
-
-Option 2: Use following commands to generate annotation files:
-
-```bash
-# ImageNet DET
-python ./tools/convert_datasets/ilsvrc/imagenet2coco_det.py -i ./data/ILSVRC -o ./data/ILSVRC/annotations
-
-# ImageNet VID
-python ./tools/convert_datasets/ilsvrc/imagenet2coco_vid.py -i ./data/ILSVRC -o ./data/ILSVRC/annotations
-
-```
-
-## Usage
-
-### Inference
-
-This section will show how to test existing models on supported datasets.
-The following testing environments are supported:
-
-- single GPU
-- single node multiple GPU
-
-During testing, different tasks share the same API and we only support `samples_per_gpu = 1`.
-
-You can use the following commands for testing:
-
-```shell
-# single-gpu testing
-python tools/test.py ${CONFIG_FILE} ${CHECKPOINT_FILE} [--out ${RESULT_FILE}] [--eval ${EVAL_METRICS}]
-
-# multi-gpu testing
-./tools/dist_test.sh ${CONFIG_FILE} ${GPU_NUM} [--checkpoint ${CHECKPOINT_FILE}] [--out ${RESULT_FILE}] [--eval ${EVAL_METRICS}]
-```
-
-Optional arguments:
-
-- `CHECKPOINT_FILE`: Filename of the checkpoint. You do not need to define it when applying some MOT methods but specify the checkpoints in the config.
-- `RESULT_FILE`: Filename of the output results in pickle format. If not specified, the results will not be saved to a file.
-- `EVAL_METRICS`: Items to be evaluated on the results. Allowed values depend on the dataset, e.g., `bbox` is available for ImageNet VID, `track` is available for LaSOT, `bbox` and `track` are both suitable for MOT17.
-- `--cfg-options`: If specified, the key-value pair optional cfg will be merged into config file
-- `--eval-options`: If specified, the key-value pair optional eval cfg will be kwargs for dataset.evaluate() function, it’s only for evaluation
-- `--format-only`: If specified, the results will be formatted to the official format.
-
-#### Examples of testing VID model
-
-Assume that you have already downloaded the checkpoints to the directory `work_dirs/`.
-
-1. Test MAMBA on ImageNet VID, and evaluate the bbox mAP.
-
-   ```shell
-   python tools/test.py configs/vid/mamba/mamba_r101_dc5_6x.py \
-       --checkpoint work_dirs/mamba_r101_dc5_6x/epoch_6_model.pth \
-       --out results.pkl \
-       --eval bbox
-   ```
-
-2. Test MAMBA with 8 GPUs on ImageNet VID, and evaluate the bbox mAP.
-
-   ```shell
-   ./tools/dist_test.sh configs/vid/mamba/mamba_r101_dc5_6x.py 8 \
-       --checkpoint work_dirs/mamba_r101_dc5_6x/epoch_6_model.pth \
-       --out results.pkl \
-       --eval bbox
-   ```
-
-### Training
-
-#### Training on a single GPU
-
-```shell
-python tools/train.py ${CONFIG_FILE} [optional arguments]
-```
-
-During training, log files and checkpoints will be saved to the working directory, which is specified by `work_dir` in the config file or via CLI argument `--work-dir`.
-
-#### Training on multiple GPUs
-
-We provide `tools/dist_train.sh` to launch training on multiple GPUs.
-The basic usage is as follows.
-
-```shell
-bash ./tools/dist_train.sh \
-    ${CONFIG_FILE} \
-    ${GPU_NUM} \
-    [optional arguments]
-```
-
-#### Examples of training VID model
-
-1. Train MAMBA on ImageNet VID and ImageNet DET with single GPU, then evaluate the bbox mAP at the last epoch.
-
-   ```shell
-   python tools/train.py configs/vid/mamba/mamba_r101_dc5_6x.py 
-   ```
-
-2. Train MAMBA on ImageNet VID and ImageNet DET with 8 GPUs, then evaluate the bbox mAP at the last epoch.
-
-   ```shell
-   ./tools/dist_train.sh configs/vid/mamba/mamba_r101_dc5_6x.py 8
-   ```
-
-## Reference
-
-The codebase is implemented based on two popular open-source repos:
- [mmdetection](https://github.com/open-mmlab/mmdetection) and [mmtracking](https://github.com/open-mmlab/mmtracking) in [PyTorch](https://pytorch.org/).
+`vfe/` is a derivative work of [MMDetection](https://github.com/open-mmlab/mmdetection)
+2.19.1 and [MMCV](https://github.com/open-mmlab/mmcv) 1.3.17, Apache-2.0; see
+[NOTICE](NOTICE).

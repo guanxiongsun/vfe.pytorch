@@ -1,0 +1,704 @@
+{
+  "backbone_cpu": {
+    "artifact": {
+      "bytes": 54611351,
+      "path": ".parity-golden/backbone_cpu.pt",
+      "sha256": "148f6b83c2cdf8221be4f5667b5f80a96f4c3e56a12a5886944a8d8bcf5183e5"
+    },
+    "checkpoints": {},
+    "command": "conda run -n vfe --no-capture-output python /home/guanxiong/code/vfe.pytorch/tools/checks/parity_backbone.py --impl mmdet --device cpu --out /home/guanxiong/code/vfe.pytorch/.parity-golden/backbone_cpu.pt",
+    "compare_flags": [],
+    "env": {
+      "legacy": "1.10.1+cu113 3.8.20",
+      "vfe": "2.10.0+cu128 3.12.14"
+    },
+    "fingerprint": {
+      "configs": {},
+      "sources": {
+        "parity_backbone.py": "4587d9a88c9afa9c81ec0cb063df5283a8d12ed801b48365d58e078110defb69"
+      }
+    },
+    "frozen_at": "2026-09-20 20:26:21",
+    "legacy_commit": "a44d8471b4a28e68f9329d349d52db5363f3c488",
+    "legacy_root": "/home/guanxiong/code/vfe.legacy",
+    "note": "ResNet/DC5, Swin, FPN",
+    "repo_commit": "b69c2da45bba6ffe1ad3ebc28219be771e768093",
+    "requires": [],
+    "seconds": {
+      "compare": 1.2,
+      "legacy": 6.9,
+      "vfe": 4.7
+    },
+    "status": "OK",
+    "summary": "BACKBONE PARITY OK"
+  },
+  "backbone_cuda": {
+    "artifact": {
+      "bytes": 54611351,
+      "path": ".parity-golden/backbone_cuda.pt",
+      "sha256": "5b5a00d71debe86b20463fd353b11eeaa8fccba2bff7108efd5225d9a07f70de"
+    },
+    "checkpoints": {},
+    "command": "conda run -n vfe --no-capture-output python /home/guanxiong/code/vfe.pytorch/tools/checks/parity_backbone.py --impl mmdet --device cuda --out /home/guanxiong/code/vfe.pytorch/.parity-golden/backbone_cuda.pt",
+    "compare_flags": [],
+    "env": {
+      "legacy": "1.10.1+cu113 3.8.20",
+      "vfe": "2.10.0+cu128 3.12.14"
+    },
+    "fingerprint": {
+      "configs": {},
+      "sources": {
+        "parity_backbone.py": "4587d9a88c9afa9c81ec0cb063df5283a8d12ed801b48365d58e078110defb69"
+      }
+    },
+    "frozen_at": "2026-09-20 20:26:38",
+    "legacy_commit": "a44d8471b4a28e68f9329d349d52db5363f3c488",
+    "legacy_root": "/home/guanxiong/code/vfe.legacy",
+    "note": "ResNet/DC5, Swin, FPN",
+    "repo_commit": "b69c2da45bba6ffe1ad3ebc28219be771e768093",
+    "requires": [
+      "cuda"
+    ],
+    "seconds": {
+      "compare": 1.2,
+      "legacy": 11.1,
+      "vfe": 5.1
+    },
+    "status": "OK",
+    "summary": "BACKBONE PARITY OK"
+  },
+  "config": {
+    "artifact": {
+      "bytes": 77729,
+      "path": ".parity-golden/config",
+      "sha256": "90700bed1bf1f7b73def08bd636dc5fdacc5377afa8255a25f0149bb11f6a791"
+    },
+    "checkpoints": {},
+    "command": "conda run -n vfe --no-capture-output python /home/guanxiong/code/vfe.pytorch/tools/checks/parity_config.py --loader mmcv --out /home/guanxiong/code/vfe.pytorch/.parity-golden/config",
+    "compare_flags": [],
+    "env": {
+      "legacy": "1.10.1+cu113 3.8.20",
+      "vfe": "2.10.0+cu128 3.12.14"
+    },
+    "fingerprint": {
+      "configs": {
+        "configs/_base_/datasets/vid/imagenet_vid_multi_frame.py": "943f922d0b1aaa4af7cb758924d45afed050c6a8a98b312bd21ebed7c90ecb2d",
+        "configs/_base_/default_runtime.py": "4bf266995b880c20310710435d5d279e791374f9611ca7122aa5cec0a3ebb207",
+        "configs/_base_/models/vid/faster_rcnn_r50_dc5.py": "563466f7957365cb240093d94dc2565733d6605b0d8ccfc420d6055a35e9dc6b",
+        "configs/_base_/schedules/schedule_1x.py": "8d25277cb1b5aceeb0a89d540f7abdfca9c4ba4e3757e2258d27dfeea7727b07",
+        "configs/vid/mamba/mamba_r101_dc5_3x.py": "94032f4af033a482725ddb39f0bdd3f3a9f4373edc2000838a25b56d7a09ec48",
+        "configs/vid/mamba/mamba_r101_dc5_6x.py": "0e8b42c52837860d32e3df20c1bff460ea3b92a6717dd79245ed4a7ea2fc8078",
+        "configs/vid/stpn/stpn_swins_adam_9x.py": "a15f9683ccfe024e0ce7eddb9018f68c2d2ae60157bdf3aa14d85dde8b349237",
+        "configs/vid/stpn/stpn_swint_adam_9x.py": "e2fc49b89c43b27cf7ab2911fe5fbd0d98fd479c12fb0264237eaa7afd0143ae"
+      },
+      "sources": {
+        "parity_config.py": "700d44a27188fd34dc965b158028176145a6c083547739b4543feb4b835d149e"
+      }
+    },
+    "frozen_at": "2026-09-20 20:25:04",
+    "legacy_commit": "a44d8471b4a28e68f9329d349d52db5363f3c488",
+    "legacy_root": "/home/guanxiong/code/vfe.legacy",
+    "note": "both config loaders, fully resolved",
+    "repo_commit": "b69c2da45bba6ffe1ad3ebc28219be771e768093",
+    "requires": [],
+    "seconds": {
+      "compare": 0.0,
+      "legacy": 1.7,
+      "vfe": 0.0
+    },
+    "status": "OK",
+    "summary": "CONFIG PARITY OK"
+  },
+  "core_cpu": {
+    "artifact": {
+      "bytes": 9048535,
+      "path": ".parity-golden/core_cpu.pt",
+      "sha256": "10add3cb3e6a158279058d9ff963a7f15d095ffb720e81c559515cab7d83fc1a"
+    },
+    "checkpoints": {},
+    "command": "conda run -n vfe --no-capture-output python /home/guanxiong/code/vfe.pytorch/tools/checks/parity_core.py --impl mmdet --device cpu --out /home/guanxiong/code/vfe.pytorch/.parity-golden/core_cpu.pt",
+    "compare_flags": [],
+    "env": {
+      "legacy": "1.10.1+cu113 3.8.20",
+      "vfe": "2.10.0+cu128 3.12.14"
+    },
+    "fingerprint": {
+      "configs": {},
+      "sources": {
+        "parity_core.py": "038f61bc5c1d7ddfecacd4a71382f5441c611f3d8f99e60eacb4802f8d1ab73a"
+      }
+    },
+    "frozen_at": "2026-09-20 20:25:39",
+    "legacy_commit": "a44d8471b4a28e68f9329d349d52db5363f3c488",
+    "legacy_root": "/home/guanxiong/code/vfe.legacy",
+    "note": "anchors, coders, assigners, samplers",
+    "repo_commit": "b69c2da45bba6ffe1ad3ebc28219be771e768093",
+    "requires": [],
+    "seconds": {
+      "compare": 1.2,
+      "legacy": 4.0,
+      "vfe": 2.5
+    },
+    "status": "OK",
+    "summary": "CORE PARITY OK (118 artifacts)"
+  },
+  "core_cuda": {
+    "artifact": {
+      "bytes": 8463511,
+      "path": ".parity-golden/core_cuda.pt",
+      "sha256": "8e30b462872c40d10f317d01f21a8145482e0b72404c7636dc1c69a7cc694b08"
+    },
+    "checkpoints": {},
+    "command": "conda run -n vfe --no-capture-output python /home/guanxiong/code/vfe.pytorch/tools/checks/parity_core.py --impl mmdet --device cuda --out /home/guanxiong/code/vfe.pytorch/.parity-golden/core_cuda.pt",
+    "compare_flags": [],
+    "env": {
+      "legacy": "1.10.1+cu113 3.8.20",
+      "vfe": "2.10.0+cu128 3.12.14"
+    },
+    "fingerprint": {
+      "configs": {},
+      "sources": {
+        "parity_core.py": "038f61bc5c1d7ddfecacd4a71382f5441c611f3d8f99e60eacb4802f8d1ab73a"
+      }
+    },
+    "frozen_at": "2026-09-20 20:25:50",
+    "legacy_commit": "a44d8471b4a28e68f9329d349d52db5363f3c488",
+    "legacy_root": "/home/guanxiong/code/vfe.legacy",
+    "note": "anchors, coders, assigners, samplers",
+    "repo_commit": "b69c2da45bba6ffe1ad3ebc28219be771e768093",
+    "requires": [
+      "cuda"
+    ],
+    "seconds": {
+      "compare": 1.1,
+      "legacy": 7.7,
+      "vfe": 2.5
+    },
+    "status": "OK",
+    "summary": "CORE PARITY OK (118 artifacts)"
+  },
+  "detector_cpu": {
+    "artifact": {
+      "bytes": 58761363,
+      "path": ".parity-golden/detector_cpu.pt",
+      "sha256": "38977442532948d46748083ad34f48e6b0883243602684e23ad41a40e2cbef98"
+    },
+    "checkpoints": {},
+    "command": "conda run -n vfe --no-capture-output python /home/guanxiong/code/vfe.pytorch/tools/checks/parity_detector.py --impl mmdet --device cpu --out /home/guanxiong/code/vfe.pytorch/.parity-golden/detector_cpu.pt",
+    "compare_flags": [],
+    "env": {
+      "legacy": "1.10.1+cu113 3.8.20",
+      "vfe": "2.10.0+cu128 3.12.14"
+    },
+    "fingerprint": {
+      "configs": {
+        "configs/_base_/datasets/vid/imagenet_vid_multi_frame.py": "943f922d0b1aaa4af7cb758924d45afed050c6a8a98b312bd21ebed7c90ecb2d",
+        "configs/_base_/default_runtime.py": "4bf266995b880c20310710435d5d279e791374f9611ca7122aa5cec0a3ebb207",
+        "configs/_base_/models/vid/faster_rcnn_r50_dc5.py": "563466f7957365cb240093d94dc2565733d6605b0d8ccfc420d6055a35e9dc6b",
+        "configs/_base_/schedules/schedule_1x.py": "8d25277cb1b5aceeb0a89d540f7abdfca9c4ba4e3757e2258d27dfeea7727b07",
+        "configs/vid/mamba/mamba_r101_dc5_3x.py": "94032f4af033a482725ddb39f0bdd3f3a9f4373edc2000838a25b56d7a09ec48",
+        "configs/vid/mamba/mamba_r101_dc5_6x.py": "0e8b42c52837860d32e3df20c1bff460ea3b92a6717dd79245ed4a7ea2fc8078",
+        "configs/vid/stpn/stpn_swint_adam_9x.py": "e2fc49b89c43b27cf7ab2911fe5fbd0d98fd479c12fb0264237eaa7afd0143ae"
+      },
+      "sources": {
+        "parity_detector.py": "3aafdfe75c549855e3a52dfd5a37788a2efb4d6ef03484298f41caa36c3a7788"
+      }
+    },
+    "frozen_at": "2026-09-20 20:28:45",
+    "legacy_commit": "a44d8471b4a28e68f9329d349d52db5363f3c488",
+    "legacy_root": "/home/guanxiong/code/vfe.legacy",
+    "note": "FasterRCNN from the real configs",
+    "repo_commit": "b69c2da45bba6ffe1ad3ebc28219be771e768093",
+    "requires": [
+      "hub_resnet101"
+    ],
+    "seconds": {
+      "compare": 1.4,
+      "legacy": 17.0,
+      "vfe": 12.7
+    },
+    "status": "OK",
+    "summary": "DETECTOR PARITY OK (799 artifacts)"
+  },
+  "detector_cuda": {
+    "artifact": {
+      "bytes": 4757543,
+      "path": ".parity-golden/detector_cuda.pt",
+      "sha256": "c95d486f613e54104b8738fc17fdeac44bb48b83f3b20c5c4a0e2fda9edc0834"
+    },
+    "checkpoints": {},
+    "command": "conda run -n vfe --no-capture-output python /home/guanxiong/code/vfe.pytorch/tools/checks/parity_detector.py --impl mmdet --device cuda --out /home/guanxiong/code/vfe.pytorch/.parity-golden/detector_cuda.pt",
+    "compare_flags": [],
+    "env": {
+      "legacy": "1.10.1+cu113 3.8.20",
+      "vfe": "2.10.0+cu128 3.12.14"
+    },
+    "fingerprint": {
+      "configs": {
+        "configs/_base_/datasets/vid/imagenet_vid_multi_frame.py": "943f922d0b1aaa4af7cb758924d45afed050c6a8a98b312bd21ebed7c90ecb2d",
+        "configs/_base_/default_runtime.py": "4bf266995b880c20310710435d5d279e791374f9611ca7122aa5cec0a3ebb207",
+        "configs/_base_/models/vid/faster_rcnn_r50_dc5.py": "563466f7957365cb240093d94dc2565733d6605b0d8ccfc420d6055a35e9dc6b",
+        "configs/_base_/schedules/schedule_1x.py": "8d25277cb1b5aceeb0a89d540f7abdfca9c4ba4e3757e2258d27dfeea7727b07",
+        "configs/vid/mamba/mamba_r101_dc5_3x.py": "94032f4af033a482725ddb39f0bdd3f3a9f4373edc2000838a25b56d7a09ec48",
+        "configs/vid/mamba/mamba_r101_dc5_6x.py": "0e8b42c52837860d32e3df20c1bff460ea3b92a6717dd79245ed4a7ea2fc8078",
+        "configs/vid/stpn/stpn_swint_adam_9x.py": "e2fc49b89c43b27cf7ab2911fe5fbd0d98fd479c12fb0264237eaa7afd0143ae"
+      },
+      "sources": {
+        "parity_detector.py": "3aafdfe75c549855e3a52dfd5a37788a2efb4d6ef03484298f41caa36c3a7788"
+      }
+    },
+    "frozen_at": "2026-09-20 20:29:09",
+    "legacy_commit": "a44d8471b4a28e68f9329d349d52db5363f3c488",
+    "legacy_root": "/home/guanxiong/code/vfe.legacy",
+    "note": "FasterRCNN from the real configs",
+    "repo_commit": "b69c2da45bba6ffe1ad3ebc28219be771e768093",
+    "requires": [
+      "cuda",
+      "hub_resnet101"
+    ],
+    "seconds": {
+      "compare": 1.6,
+      "legacy": 13.8,
+      "vfe": 8.5
+    },
+    "status": "OK",
+    "summary": "DETECTOR PARITY OK (789 artifacts)"
+  },
+  "losses_cpu": {
+    "artifact": {
+      "bytes": 1025950,
+      "path": ".parity-golden/losses_cpu.pt",
+      "sha256": "104a4873c178a5031df985504f7879e4fc70f4596a20da606b042028c67e6a75"
+    },
+    "checkpoints": {},
+    "command": "conda run -n vfe --no-capture-output python /home/guanxiong/code/vfe.pytorch/tools/checks/parity_losses.py --impl mmdet --device cpu --out /home/guanxiong/code/vfe.pytorch/.parity-golden/losses_cpu.pt",
+    "compare_flags": [],
+    "env": {
+      "legacy": "1.10.1+cu113 3.8.20",
+      "vfe": "2.10.0+cu128 3.12.14"
+    },
+    "fingerprint": {
+      "configs": {},
+      "sources": {
+        "parity_losses.py": "f85ec8ab51b28dfef0851e744ddc626bbb86f2e7f3780393c63034152e94a31d"
+      }
+    },
+    "frozen_at": "2026-09-20 20:25:57",
+    "legacy_commit": "a44d8471b4a28e68f9329d349d52db5363f3c488",
+    "legacy_root": "/home/guanxiong/code/vfe.legacy",
+    "note": "",
+    "repo_commit": "b69c2da45bba6ffe1ad3ebc28219be771e768093",
+    "requires": [],
+    "seconds": {
+      "compare": 1.1,
+      "legacy": 3.4,
+      "vfe": 1.9
+    },
+    "status": "OK",
+    "summary": "LOSS PARITY OK (45 artifacts)"
+  },
+  "losses_cuda": {
+    "artifact": {
+      "bytes": 1025950,
+      "path": ".parity-golden/losses_cuda.pt",
+      "sha256": "b26006d8ffd9afe97eec78ae286c1f3d54651421659efa1db3c49b06e26363d2"
+    },
+    "checkpoints": {},
+    "command": "conda run -n vfe --no-capture-output python /home/guanxiong/code/vfe.pytorch/tools/checks/parity_losses.py --impl mmdet --device cuda --out /home/guanxiong/code/vfe.pytorch/.parity-golden/losses_cuda.pt",
+    "compare_flags": [],
+    "env": {
+      "legacy": "1.10.1+cu113 3.8.20",
+      "vfe": "2.10.0+cu128 3.12.14"
+    },
+    "fingerprint": {
+      "configs": {},
+      "sources": {
+        "parity_losses.py": "f85ec8ab51b28dfef0851e744ddc626bbb86f2e7f3780393c63034152e94a31d"
+      }
+    },
+    "frozen_at": "2026-09-20 20:26:08",
+    "legacy_commit": "a44d8471b4a28e68f9329d349d52db5363f3c488",
+    "legacy_root": "/home/guanxiong/code/vfe.legacy",
+    "note": "",
+    "repo_commit": "b69c2da45bba6ffe1ad3ebc28219be771e768093",
+    "requires": [
+      "cuda"
+    ],
+    "seconds": {
+      "compare": 1.1,
+      "legacy": 7.7,
+      "vfe": 2.4
+    },
+    "status": "OK",
+    "summary": "LOSS PARITY OK (45 artifacts)"
+  },
+  "mamba_cpu": {
+    "artifact": {
+      "bytes": 21736079,
+      "path": ".parity-golden/mamba_cpu.pt",
+      "sha256": "12e4a54263410c9935265fa64035cbf6a3cf4ebd3fda6e1d542dfa835774ab2c"
+    },
+    "checkpoints": {},
+    "command": "conda run -n vfe --no-capture-output python /home/guanxiong/code/vfe.pytorch/tools/checks/parity_mamba.py --impl mmdet --device cpu --out /home/guanxiong/code/vfe.pytorch/.parity-golden/mamba_cpu.pt",
+    "compare_flags": [],
+    "env": {
+      "legacy": "1.10.1+cu113 3.8.20",
+      "vfe": "2.10.0+cu128 3.12.14"
+    },
+    "fingerprint": {
+      "configs": {
+        "configs/_base_/datasets/vid/imagenet_vid_multi_frame.py": "943f922d0b1aaa4af7cb758924d45afed050c6a8a98b312bd21ebed7c90ecb2d",
+        "configs/_base_/default_runtime.py": "4bf266995b880c20310710435d5d279e791374f9611ca7122aa5cec0a3ebb207",
+        "configs/_base_/models/vid/faster_rcnn_r50_dc5.py": "563466f7957365cb240093d94dc2565733d6605b0d8ccfc420d6055a35e9dc6b",
+        "configs/_base_/schedules/schedule_1x.py": "8d25277cb1b5aceeb0a89d540f7abdfca9c4ba4e3757e2258d27dfeea7727b07",
+        "configs/vid/mamba/mamba_r101_dc5_3x.py": "94032f4af033a482725ddb39f0bdd3f3a9f4373edc2000838a25b56d7a09ec48",
+        "configs/vid/mamba/mamba_r101_dc5_6x.py": "0e8b42c52837860d32e3df20c1bff460ea3b92a6717dd79245ed4a7ea2fc8078"
+      },
+      "sources": {
+        "parity_detector.py": "3aafdfe75c549855e3a52dfd5a37788a2efb4d6ef03484298f41caa36c3a7788",
+        "parity_mamba.py": "78680c6e6286f1de3e7bf85c5179ade01a3635887140ce7bc560f34de262ddb2"
+      }
+    },
+    "frozen_at": "2026-09-20 20:30:03",
+    "legacy_commit": "a44d8471b4a28e68f9329d349d52db5363f3c488",
+    "legacy_root": "/home/guanxiong/code/vfe.legacy",
+    "note": "memory bank, aggregators, stateful test",
+    "repo_commit": "b69c2da45bba6ffe1ad3ebc28219be771e768093",
+    "requires": [
+      "hub_resnet101"
+    ],
+    "seconds": {
+      "compare": 1.2,
+      "legacy": 28.0,
+      "vfe": 24.7
+    },
+    "status": "OK",
+    "summary": "MAMBA PARITY OK (647 artifacts)"
+  },
+  "mamba_cuda": {
+    "artifact": {
+      "bytes": 1558185,
+      "path": ".parity-golden/mamba_cuda.pt",
+      "sha256": "44c5e6972be39ab9bae253bc22d238c76c550087c4dfb36544e30fb33fd6df56"
+    },
+    "checkpoints": {},
+    "command": "conda run -n vfe --no-capture-output python /home/guanxiong/code/vfe.pytorch/tools/checks/parity_mamba.py --impl mmdet --device cuda --out /home/guanxiong/code/vfe.pytorch/.parity-golden/mamba_cuda.pt",
+    "compare_flags": [],
+    "env": {
+      "legacy": "1.10.1+cu113 3.8.20",
+      "vfe": "2.10.0+cu128 3.12.14"
+    },
+    "fingerprint": {
+      "configs": {
+        "configs/_base_/datasets/vid/imagenet_vid_multi_frame.py": "943f922d0b1aaa4af7cb758924d45afed050c6a8a98b312bd21ebed7c90ecb2d",
+        "configs/_base_/default_runtime.py": "4bf266995b880c20310710435d5d279e791374f9611ca7122aa5cec0a3ebb207",
+        "configs/_base_/models/vid/faster_rcnn_r50_dc5.py": "563466f7957365cb240093d94dc2565733d6605b0d8ccfc420d6055a35e9dc6b",
+        "configs/_base_/schedules/schedule_1x.py": "8d25277cb1b5aceeb0a89d540f7abdfca9c4ba4e3757e2258d27dfeea7727b07",
+        "configs/vid/mamba/mamba_r101_dc5_3x.py": "94032f4af033a482725ddb39f0bdd3f3a9f4373edc2000838a25b56d7a09ec48",
+        "configs/vid/mamba/mamba_r101_dc5_6x.py": "0e8b42c52837860d32e3df20c1bff460ea3b92a6717dd79245ed4a7ea2fc8078"
+      },
+      "sources": {
+        "parity_detector.py": "3aafdfe75c549855e3a52dfd5a37788a2efb4d6ef03484298f41caa36c3a7788",
+        "parity_mamba.py": "78680c6e6286f1de3e7bf85c5179ade01a3635887140ce7bc560f34de262ddb2"
+      }
+    },
+    "frozen_at": "2026-09-20 20:30:24",
+    "legacy_commit": "a44d8471b4a28e68f9329d349d52db5363f3c488",
+    "legacy_root": "/home/guanxiong/code/vfe.legacy",
+    "note": "memory bank, aggregators, stateful test",
+    "repo_commit": "b69c2da45bba6ffe1ad3ebc28219be771e768093",
+    "requires": [
+      "cuda",
+      "hub_resnet101"
+    ],
+    "seconds": {
+      "compare": 1.2,
+      "legacy": 12.8,
+      "vfe": 7.0
+    },
+    "status": "OK",
+    "summary": "MAMBA PARITY OK (632 artifacts)"
+  },
+  "ops_cpu": {
+    "artifact": {
+      "bytes": 862743,
+      "path": ".parity-golden/ops_cpu.pt",
+      "sha256": "b06ba883ec2f6a09446556f402dc0fe62fdd5edbf7ed2a6accb98001fb45c378"
+    },
+    "checkpoints": {},
+    "command": "conda run -n vfe --no-capture-output python /home/guanxiong/code/vfe.pytorch/tools/checks/parity_ops.py --impl mmcv --device cpu --out /home/guanxiong/code/vfe.pytorch/.parity-golden/ops_cpu.pt",
+    "compare_flags": [],
+    "env": {
+      "legacy": "1.10.1+cu113 3.8.20",
+      "vfe": "2.10.0+cu128 3.12.14"
+    },
+    "fingerprint": {
+      "configs": {},
+      "sources": {
+        "parity_ops.py": "040c7c382115b14324b06a724e3dcf9f51048ce274141bdcc079c985d22f4bf8"
+      }
+    },
+    "frozen_at": "2026-09-20 20:25:12",
+    "legacy_commit": "a44d8471b4a28e68f9329d349d52db5363f3c488",
+    "legacy_root": "/home/guanxiong/code/vfe.legacy",
+    "note": "nms, roi_align",
+    "repo_commit": "b69c2da45bba6ffe1ad3ebc28219be771e768093",
+    "requires": [],
+    "seconds": {
+      "compare": 1.1,
+      "legacy": 2.6,
+      "vfe": 2.1
+    },
+    "status": "OK",
+    "summary": "OPS PARITY OK"
+  },
+  "ops_cuda": {
+    "artifact": {
+      "bytes": 860695,
+      "path": ".parity-golden/ops_cuda.pt",
+      "sha256": "13fd386fdd33964c2ce8255e1962c3f7d2d8701a93fa83497989841770d1fa44"
+    },
+    "checkpoints": {},
+    "command": "conda run -n vfe --no-capture-output python /home/guanxiong/code/vfe.pytorch/tools/checks/parity_ops.py --impl mmcv --device cuda --out /home/guanxiong/code/vfe.pytorch/.parity-golden/ops_cuda.pt",
+    "compare_flags": [],
+    "env": {
+      "legacy": "1.10.1+cu113 3.8.20",
+      "vfe": "2.10.0+cu128 3.12.14"
+    },
+    "fingerprint": {
+      "configs": {},
+      "sources": {
+        "parity_ops.py": "040c7c382115b14324b06a724e3dcf9f51048ce274141bdcc079c985d22f4bf8"
+      }
+    },
+    "frozen_at": "2026-09-20 20:25:31",
+    "legacy_commit": "a44d8471b4a28e68f9329d349d52db5363f3c488",
+    "legacy_root": "/home/guanxiong/code/vfe.legacy",
+    "note": "nms, roi_align",
+    "repo_commit": "b69c2da45bba6ffe1ad3ebc28219be771e768093",
+    "requires": [
+      "cuda"
+    ],
+    "seconds": {
+      "compare": 1.1,
+      "legacy": 14.4,
+      "vfe": 2.6
+    },
+    "status": "OK",
+    "summary": "OPS PARITY OK"
+  },
+  "optim": {
+    "artifact": {
+      "bytes": 3367191,
+      "path": ".parity-golden/optim.pt",
+      "sha256": "5c42201f634e3856f6779c1ad14af22d38068dad6191eed8415662f395838548"
+    },
+    "checkpoints": {},
+    "command": "conda run -n vfe --no-capture-output python /home/guanxiong/code/vfe.pytorch/tools/checks/parity_optim.py --impl mmdet --out /home/guanxiong/code/vfe.pytorch/.parity-golden/optim.pt",
+    "compare_flags": [],
+    "env": {
+      "legacy": "1.10.1+cu113 3.8.20",
+      "vfe": "2.10.0+cu128 3.12.14"
+    },
+    "fingerprint": {
+      "configs": {
+        "configs/_base_/datasets/vid/imagenet_vid_multi_frame.py": "943f922d0b1aaa4af7cb758924d45afed050c6a8a98b312bd21ebed7c90ecb2d",
+        "configs/_base_/default_runtime.py": "4bf266995b880c20310710435d5d279e791374f9611ca7122aa5cec0a3ebb207",
+        "configs/_base_/models/vid/faster_rcnn_r50_dc5.py": "563466f7957365cb240093d94dc2565733d6605b0d8ccfc420d6055a35e9dc6b",
+        "configs/_base_/schedules/schedule_1x.py": "8d25277cb1b5aceeb0a89d540f7abdfca9c4ba4e3757e2258d27dfeea7727b07",
+        "configs/vid/mamba/mamba_r101_dc5_3x.py": "94032f4af033a482725ddb39f0bdd3f3a9f4373edc2000838a25b56d7a09ec48",
+        "configs/vid/mamba/mamba_r101_dc5_6x.py": "0e8b42c52837860d32e3df20c1bff460ea3b92a6717dd79245ed4a7ea2fc8078",
+        "configs/vid/stpn/stpn_swint_adam_9x.py": "e2fc49b89c43b27cf7ab2911fe5fbd0d98fd479c12fb0264237eaa7afd0143ae"
+      },
+      "sources": {
+        "parity_detector.py": "3aafdfe75c549855e3a52dfd5a37788a2efb4d6ef03484298f41caa36c3a7788",
+        "parity_optim.py": "18a90b7caed9eae1c281bbf21ecfe8fba50bcf12348e8b31fc6ea370cdc5552d"
+      }
+    },
+    "frozen_at": "2026-09-20 20:30:39",
+    "legacy_commit": "a44d8471b4a28e68f9329d349d52db5363f3c488",
+    "legacy_root": "/home/guanxiong/code/vfe.legacy",
+    "note": "per-parameter optimiser settings",
+    "repo_commit": "b69c2da45bba6ffe1ad3ebc28219be771e768093",
+    "requires": [
+      "hub_resnet101"
+    ],
+    "seconds": {
+      "compare": 1.1,
+      "legacy": 9.7,
+      "vfe": 4.5
+    },
+    "status": "OK",
+    "summary": "OPTIM PARITY OK (6 artifacts, all exact)"
+  },
+  "roi_head_cpu": {
+    "artifact": {
+      "bytes": 1293143001,
+      "path": ".parity-golden/roi_head_cpu.pt",
+      "sha256": "a17d8e3b130c5ea5a6dfaafe839da472b19596b3b7902dd51d820508f237daca"
+    },
+    "checkpoints": {},
+    "command": "conda run -n vfe --no-capture-output python /home/guanxiong/code/vfe.pytorch/tools/checks/parity_roi_head.py --impl mmdet --device cpu --out /home/guanxiong/code/vfe.pytorch/.parity-golden/roi_head_cpu.pt",
+    "compare_flags": [],
+    "env": {
+      "legacy": "1.10.1+cu113 3.8.20",
+      "vfe": "2.10.0+cu128 3.12.14"
+    },
+    "fingerprint": {
+      "configs": {
+        "configs/_base_/datasets/vid/imagenet_vid_multi_frame.py": "943f922d0b1aaa4af7cb758924d45afed050c6a8a98b312bd21ebed7c90ecb2d",
+        "configs/_base_/default_runtime.py": "4bf266995b880c20310710435d5d279e791374f9611ca7122aa5cec0a3ebb207",
+        "configs/_base_/models/vid/faster_rcnn_r50_dc5.py": "563466f7957365cb240093d94dc2565733d6605b0d8ccfc420d6055a35e9dc6b",
+        "configs/_base_/schedules/schedule_1x.py": "8d25277cb1b5aceeb0a89d540f7abdfca9c4ba4e3757e2258d27dfeea7727b07",
+        "configs/vid/mamba/mamba_r101_dc5_3x.py": "94032f4af033a482725ddb39f0bdd3f3a9f4373edc2000838a25b56d7a09ec48",
+        "configs/vid/mamba/mamba_r101_dc5_6x.py": "0e8b42c52837860d32e3df20c1bff460ea3b92a6717dd79245ed4a7ea2fc8078",
+        "configs/vid/stpn/stpn_swint_adam_9x.py": "e2fc49b89c43b27cf7ab2911fe5fbd0d98fd479c12fb0264237eaa7afd0143ae"
+      },
+      "sources": {
+        "parity_roi_head.py": "43c5dc13dfd6606752fb5b6092f48b24b5cce90327169ec4ed8ef2d269e58597"
+      }
+    },
+    "frozen_at": "2026-09-20 20:27:52",
+    "legacy_commit": "a44d8471b4a28e68f9329d349d52db5363f3c488",
+    "legacy_root": "/home/guanxiong/code/vfe.legacy",
+    "note": "",
+    "repo_commit": "b69c2da45bba6ffe1ad3ebc28219be771e768093",
+    "requires": [],
+    "seconds": {
+      "compare": 3.0,
+      "legacy": 33.1,
+      "vfe": 17.9
+    },
+    "status": "OK",
+    "summary": "ROI HEAD PARITY OK (268 artifacts)"
+  },
+  "roi_head_cuda": {
+    "artifact": {
+      "bytes": 1305602137,
+      "path": ".parity-golden/roi_head_cuda.pt",
+      "sha256": "942a4b2b591a57977dfe014161399eec8fe833c661945051458148233222cf7d"
+    },
+    "checkpoints": {},
+    "command": "conda run -n vfe --no-capture-output python /home/guanxiong/code/vfe.pytorch/tools/checks/parity_roi_head.py --impl mmdet --device cuda --out /home/guanxiong/code/vfe.pytorch/.parity-golden/roi_head_cuda.pt",
+    "compare_flags": [
+      "--skip-train-grads"
+    ],
+    "env": {
+      "legacy": "1.10.1+cu113 3.8.20",
+      "vfe": "2.10.0+cu128 3.12.14"
+    },
+    "fingerprint": {
+      "configs": {
+        "configs/_base_/datasets/vid/imagenet_vid_multi_frame.py": "943f922d0b1aaa4af7cb758924d45afed050c6a8a98b312bd21ebed7c90ecb2d",
+        "configs/_base_/default_runtime.py": "4bf266995b880c20310710435d5d279e791374f9611ca7122aa5cec0a3ebb207",
+        "configs/_base_/models/vid/faster_rcnn_r50_dc5.py": "563466f7957365cb240093d94dc2565733d6605b0d8ccfc420d6055a35e9dc6b",
+        "configs/_base_/schedules/schedule_1x.py": "8d25277cb1b5aceeb0a89d540f7abdfca9c4ba4e3757e2258d27dfeea7727b07",
+        "configs/vid/mamba/mamba_r101_dc5_3x.py": "94032f4af033a482725ddb39f0bdd3f3a9f4373edc2000838a25b56d7a09ec48",
+        "configs/vid/mamba/mamba_r101_dc5_6x.py": "0e8b42c52837860d32e3df20c1bff460ea3b92a6717dd79245ed4a7ea2fc8078",
+        "configs/vid/stpn/stpn_swint_adam_9x.py": "e2fc49b89c43b27cf7ab2911fe5fbd0d98fd479c12fb0264237eaa7afd0143ae"
+      },
+      "sources": {
+        "parity_roi_head.py": "43c5dc13dfd6606752fb5b6092f48b24b5cce90327169ec4ed8ef2d269e58597"
+      }
+    },
+    "frozen_at": "2026-09-20 20:28:13",
+    "legacy_commit": "a44d8471b4a28e68f9329d349d52db5363f3c488",
+    "legacy_root": "/home/guanxiong/code/vfe.legacy",
+    "note": "",
+    "repo_commit": "b69c2da45bba6ffe1ad3ebc28219be771e768093",
+    "requires": [
+      "cuda"
+    ],
+    "seconds": {
+      "compare": 2.7,
+      "legacy": 12.7,
+      "vfe": 5.8
+    },
+    "status": "OK",
+    "summary": "ROI HEAD PARITY OK (178 artifacts)"
+  },
+  "rpn_cpu": {
+    "artifact": {
+      "bytes": 9882205,
+      "path": ".parity-golden/rpn_cpu.pt",
+      "sha256": "eab7251680f00de69aeac4d7230312fd0925dec6f1c920ef91c0f2744ec132ff"
+    },
+    "checkpoints": {},
+    "command": "conda run -n vfe --no-capture-output python /home/guanxiong/code/vfe.pytorch/tools/checks/parity_rpn.py --impl mmdet --device cpu --out /home/guanxiong/code/vfe.pytorch/.parity-golden/rpn_cpu.pt",
+    "compare_flags": [],
+    "env": {
+      "legacy": "1.10.1+cu113 3.8.20",
+      "vfe": "2.10.0+cu128 3.12.14"
+    },
+    "fingerprint": {
+      "configs": {
+        "configs/_base_/datasets/vid/imagenet_vid_multi_frame.py": "943f922d0b1aaa4af7cb758924d45afed050c6a8a98b312bd21ebed7c90ecb2d",
+        "configs/_base_/default_runtime.py": "4bf266995b880c20310710435d5d279e791374f9611ca7122aa5cec0a3ebb207",
+        "configs/_base_/models/vid/faster_rcnn_r50_dc5.py": "563466f7957365cb240093d94dc2565733d6605b0d8ccfc420d6055a35e9dc6b",
+        "configs/_base_/schedules/schedule_1x.py": "8d25277cb1b5aceeb0a89d540f7abdfca9c4ba4e3757e2258d27dfeea7727b07",
+        "configs/vid/mamba/mamba_r101_dc5_3x.py": "94032f4af033a482725ddb39f0bdd3f3a9f4373edc2000838a25b56d7a09ec48",
+        "configs/vid/mamba/mamba_r101_dc5_6x.py": "0e8b42c52837860d32e3df20c1bff460ea3b92a6717dd79245ed4a7ea2fc8078",
+        "configs/vid/stpn/stpn_swint_adam_9x.py": "e2fc49b89c43b27cf7ab2911fe5fbd0d98fd479c12fb0264237eaa7afd0143ae"
+      },
+      "sources": {
+        "parity_rpn.py": "6d042b80bdbafebda18163ac3b6e032ff5ff0648520fbf8dbe481b1b6022bc83"
+      }
+    },
+    "frozen_at": "2026-09-20 20:26:46",
+    "legacy_commit": "a44d8471b4a28e68f9329d349d52db5363f3c488",
+    "legacy_root": "/home/guanxiong/code/vfe.legacy",
+    "note": "",
+    "repo_commit": "b69c2da45bba6ffe1ad3ebc28219be771e768093",
+    "requires": [],
+    "seconds": {
+      "compare": 1.1,
+      "legacy": 4.0,
+      "vfe": 2.6
+    },
+    "status": "OK",
+    "summary": "RPN PARITY OK (120 artifacts)"
+  },
+  "rpn_cuda": {
+    "artifact": {
+      "bytes": 9589137,
+      "path": ".parity-golden/rpn_cuda.pt",
+      "sha256": "df0a939de486a79adb309b25655e3143dc5689ee5f5c877ffae24e596323154a"
+    },
+    "checkpoints": {},
+    "command": "conda run -n vfe --no-capture-output python /home/guanxiong/code/vfe.pytorch/tools/checks/parity_rpn.py --impl mmdet --device cuda --out /home/guanxiong/code/vfe.pytorch/.parity-golden/rpn_cuda.pt",
+    "compare_flags": [],
+    "env": {
+      "legacy": "1.10.1+cu113 3.8.20",
+      "vfe": "2.10.0+cu128 3.12.14"
+    },
+    "fingerprint": {
+      "configs": {
+        "configs/_base_/datasets/vid/imagenet_vid_multi_frame.py": "943f922d0b1aaa4af7cb758924d45afed050c6a8a98b312bd21ebed7c90ecb2d",
+        "configs/_base_/default_runtime.py": "4bf266995b880c20310710435d5d279e791374f9611ca7122aa5cec0a3ebb207",
+        "configs/_base_/models/vid/faster_rcnn_r50_dc5.py": "563466f7957365cb240093d94dc2565733d6605b0d8ccfc420d6055a35e9dc6b",
+        "configs/_base_/schedules/schedule_1x.py": "8d25277cb1b5aceeb0a89d540f7abdfca9c4ba4e3757e2258d27dfeea7727b07",
+        "configs/vid/mamba/mamba_r101_dc5_3x.py": "94032f4af033a482725ddb39f0bdd3f3a9f4373edc2000838a25b56d7a09ec48",
+        "configs/vid/mamba/mamba_r101_dc5_6x.py": "0e8b42c52837860d32e3df20c1bff460ea3b92a6717dd79245ed4a7ea2fc8078",
+        "configs/vid/stpn/stpn_swint_adam_9x.py": "e2fc49b89c43b27cf7ab2911fe5fbd0d98fd479c12fb0264237eaa7afd0143ae"
+      },
+      "sources": {
+        "parity_rpn.py": "6d042b80bdbafebda18163ac3b6e032ff5ff0648520fbf8dbe481b1b6022bc83"
+      }
+    },
+    "frozen_at": "2026-09-20 20:26:58",
+    "legacy_commit": "a44d8471b4a28e68f9329d349d52db5363f3c488",
+    "legacy_root": "/home/guanxiong/code/vfe.legacy",
+    "note": "",
+    "repo_commit": "b69c2da45bba6ffe1ad3ebc28219be771e768093",
+    "requires": [
+      "cuda"
+    ],
+    "seconds": {
+      "compare": 1.1,
+      "legacy": 7.9,
+      "vfe": 2.7
+    },
+    "status": "OK",
+    "summary": "RPN PARITY OK (120 artifacts)"
+  }
+}

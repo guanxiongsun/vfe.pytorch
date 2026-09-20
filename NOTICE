@@ -1,0 +1,23 @@
+vfe.pytorch
+Copyright 2024-2026 Guanxiong Sun
+
+This product includes software developed at OpenMMLab
+(https://github.com/open-mmlab/mmdetection).
+
+The `vfe/` package is a derivative work of MMDetection 2.19.1 and MMCV 1.3.17,
+both licensed under the Apache License, Version 2.0. It reimplements the parts
+of those projects that MAMBA and STPN use -- models, data pipeline, evaluator,
+training loop, samplers, config system -- on plain PyTorch, so that neither mmcv
+nor mmdet nor mmengine is imported at runtime. Structure, naming, defaults and
+numerical behaviour deliberately follow the originals: the reimplementation is
+checked against them tensor by tensor (see docs/parity.md).
+
+Until version 2.0 this repository also vendored MMDetection 2.19.1 in full,
+under `mmdet/`. That tree is preserved at the `v1.0.0` tag and carries its own
+copyright notices.
+
+`vfe/evaluation/vid_motion_iou.npz` is converted from the ImageNet VID
+validation motion-IoU table published with Flow-Guided Feature Aggregation
+(https://github.com/msracver/Flow-Guided-Feature-Aggregation), and is used by
+the motion-based AP breakdown that the video object detection literature
+reports.

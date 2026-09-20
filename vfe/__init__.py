@@ -1,8 +1,10 @@
-"""vfe — pure-PyTorch video object detection (MAMBA, STPN, SELSA).
+"""vfe — pure-PyTorch video object detection.
 
-This package is the rewrite target: it replaces the vendored mmdetection 2.19.1
-tree at ``mmdet/`` with plain ``torch`` + ``torchvision.ops`` code. During the
-port, ``mmdet/`` stays in the repo as a reference oracle (see REWRITE_PLAN.md).
+MAMBA and STPN on ImageNet VID, implemented on plain ``torch`` and
+``torchvision.ops``: no mmcv, mmdet or mmengine at runtime. The original
+mmdetection 2.19.1 implementation this was ported from is preserved at the
+``v1.0.0`` tag and is used as the reference the port is checked against
+(see docs/parity.md).
 """
 
-__version__ = "0.1.0"
+__version__ = "2.0.0"
