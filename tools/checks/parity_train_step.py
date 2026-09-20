@@ -163,7 +163,6 @@ def build(impl, config, checkpoint):
     if impl == "mmdet":
         from mmcv import Config
         from mmcv.runner import OptimizerHook, build_optimizer, load_checkpoint
-
         from mmdet.models import build_model
 
         cfg = Config.fromfile(str(config))
