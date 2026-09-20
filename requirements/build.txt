@@ -1,3 +1,0 @@
-# These must be installed before building mmdetection
-cython==0.29.36
-numpy<1.24.0

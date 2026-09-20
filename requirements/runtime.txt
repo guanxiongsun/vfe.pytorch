@@ -1,5 +1,0 @@
-matplotlib
-numpy
-mmpycocotools
-six
-terminaltables
