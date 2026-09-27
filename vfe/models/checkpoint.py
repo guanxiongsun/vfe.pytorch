@@ -9,9 +9,11 @@ Handles the three checkpoint sources this repo's configs actually name:
   downloaded under either stack are interchangeable.
 * an ``https://`` URL -- how the Swin configs fetch their pretrained weights.
 * a local ``.pth`` path -- the released MAMBA/STPN detector checkpoints.
+* ``open-mmlab://detectron/resnet{50,101}_caffe`` -- the caffe-style ImageNet
+  backbones FCOS (and so EOVOD) starts from. mmcv resolved these through its
+  ``open_mmlab.json`` index; the two entries this repo needs are inlined.
 
-Dropped from mmcv: the ``open-mmlab://`` and ``mmcls://`` model zoos (no config
-here targets them; they would need mmcv's JSON index to resolve).
+Dropped from mmcv: the rest of the ``open-mmlab://`` zoo and ``mmcls://``.
 """
 
 from __future__ import annotations
@@ -30,10 +32,25 @@ __all__ = ["load_checkpoint", "load_state_dict", "resolve_checkpoint_uri"]
 logger = logging.getLogger(__name__)
 
 TORCHVISION_PREFIX = "torchvision://"
+OPEN_MMLAB_PREFIX = "open-mmlab://"
+# From mmcv 1.3.17's model_zoo/open_mmlab.json.
+OPEN_MMLAB_URLS = {
+    "detectron/resnet50_caffe":
+        "https://download.openmmlab.com/pretrain/third_party/resnet50_caffe-788b5fa3.pth",
+    "detectron/resnet101_caffe":
+        "https://download.openmmlab.com/pretrain/third_party/resnet101_caffe-3ad79236.pth",
+}
 
 
 def resolve_checkpoint_uri(filename: str) -> str:
-    """Expand a ``torchvision://name`` shorthand to a real URL."""
+    """Expand a ``torchvision://`` or ``open-mmlab://`` shorthand to a real URL."""
+    if filename.startswith(OPEN_MMLAB_PREFIX):
+        name = filename[len(OPEN_MMLAB_PREFIX):]
+        if name not in OPEN_MMLAB_URLS:
+            raise ValueError(
+                f"unknown open-mmlab model {name!r}; known: {sorted(OPEN_MMLAB_URLS)}"
+            )
+        return OPEN_MMLAB_URLS[name]
     if not filename.startswith(TORCHVISION_PREFIX):
         return filename
 

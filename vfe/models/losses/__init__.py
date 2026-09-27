@@ -1,5 +1,7 @@
 from .accuracy import Accuracy, accuracy
 from .cross_entropy_loss import CrossEntropyLoss, binary_cross_entropy, cross_entropy
+from .focal_loss import FocalLoss, sigmoid_focal_loss
+from .iou_loss import IoULoss, iou_loss
 from .smooth_l1_loss import L1Loss, SmoothL1Loss, l1_loss, smooth_l1_loss
 from .utils import reduce_loss, weight_reduce_loss, weighted_loss
 
@@ -9,6 +11,10 @@ __all__ = [
     "CrossEntropyLoss",
     "cross_entropy",
     "binary_cross_entropy",
+    "FocalLoss",
+    "sigmoid_focal_loss",
+    "IoULoss",
+    "iou_loss",
     "SmoothL1Loss",
     "L1Loss",
     "smooth_l1_loss",

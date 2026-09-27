@@ -8,7 +8,22 @@ from typing import Any
 
 import torch
 
-__all__ = ["multi_apply", "unmap", "select_single_mlvl", "filter_scores_and_topk"]
+__all__ = ["multi_apply", "unmap", "select_single_mlvl", "filter_scores_and_topk", "reduce_mean"]
+
+
+def reduce_mean(tensor: torch.Tensor) -> torch.Tensor:
+    """Mean of ``tensor`` across ranks; the tensor itself outside DDP.
+
+    FCOS normalises its losses by the number of positives *summed over the
+    batch on every GPU*, so all ranks divide by the same count.
+    """
+    import torch.distributed as dist
+
+    if not (dist.is_available() and dist.is_initialized()):
+        return tensor
+    tensor = tensor.clone()
+    dist.all_reduce(tensor.div_(dist.get_world_size()), op=dist.ReduceOp.SUM)
+    return tensor
 
 
 def multi_apply(func: Callable, *args: Any, **kwargs: Any) -> tuple[list, ...]:
