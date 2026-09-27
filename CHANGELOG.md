@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- EOVOD (`vfe/models/vid/eovod.py`), implemented from its paper on a ported
+  FCOS: a location prior and a size prior from the previous frame's
+  detections, per-level pixel memory and SELSA-style attention over the FPN
+  outputs. Configs under `configs/vid/eovod/`; untrained so far.
+- The one-stage machinery it needs: `FCOS`, `FCOSHead`,
+  `MlvlPointGenerator`, `DistancePointBBoxCoder`, `FocalLoss`, `IoULoss`,
+  `Scale`, and `open-mmlab://detectron/resnet{50,101}_caffe` checkpoint URIs.
+  Checked against mmdet 2.19.1 by `tools/checks/parity_fcos.py` (exact in
+  float64).
+- COCO-style box evaluation (`vfe/evaluation/coco.py`);
+  `ImagenetVIDDataset.evaluate(..., coco_style=True)` reports it beside the
+  VID metric.
+- `docs/rewrite-plan.md` closes with an epilogue on the 2.0.0 release;
+  `docs/eovod-plan.md` tracks the new phase. CI no longer runs on pushes to
+  the merged `pure-pytorch-rewrite` branch.
+
 ## 2.0.0
 
 Rewritten on plain PyTorch; mmcv, mmdet and mmengine are no longer used.

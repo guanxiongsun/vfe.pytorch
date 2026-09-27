@@ -34,6 +34,14 @@ comparison is file-only and runs in either environment.
 
 `tools/checks/run_parity.py` drives all of them.
 
+One harness is not in its matrix yet: `parity_fcos.py`, which checks the FCOS
+head EOVOD is built on. Its mmdet side needs only the `v1.0.0` tree on
+`PYTHONPATH` and runs on CPU, so it was run in a cloud container against a
+PyPI-built legacy stack (recipe in [eovod-plan.md](eovod-plan.md)). It also
+takes `--dtype float64`, which separates a porting error from float32
+accumulation noise: in float64 the two stacks agree to 1e-15. It joins the
+matrix once frozen on the machine that holds the goldens.
+
 ## Re-checking against the frozen artifacts
 
 ```bash

@@ -1,177 +1,295 @@
-# EOVOD port — Phase 9
+# EOVOD — Phase 9
 
-> Working document for bringing EOVOD into `vfe/`, the phase after 2.0.
+> Working document for EOVOD in `vfe/`, the phase after 2.0.
 > [rewrite-plan.md](rewrite-plan.md) records how MAMBA and STPN were ported and
-> why the method is what it is; this document applies the same method to
-> EOVOD. Update the checkboxes and the Progress log as work proceeds.
+> why the method is what it is. This phase is different in kind: EOVOD is
+> **implemented from its paper**, not ported from its released code. Update the
+> checkboxes and the Progress log as work proceeds.
 
 - **Goal:** EOVOD (*Efficient One-stage Video Object Detection by Exploiting
-  Temporal Consistency*, ECCV 2022) running on plain PyTorch in `vfe/`, checked
-  against its original code, with its released checkpoint reproducing its
-  published score.
-- **Source:** [guanxiongsun/EOVOD](https://github.com/guanxiongsun/EOVOD) at
-  `84576bb` (2023-04-03), the only public code. The checkpoint and training log
-  are on Google Drive, linked from its README. Issues #1 and #2 on this
-  repository ask about it.
-- **Method:** as for MAMBA and STPN. The original code is the oracle; port
-  bottom-up with a parity harness per layer; evaluate the released checkpoint
-  (E-M1) before spending any training compute; freeze the oracle's side into
-  `run_parity.py` before retiring it.
+  Temporal Consistency*, Sun, Hua, Hu, Robertson; ECCV 2022,
+  [arXiv 2402.09241](https://arxiv.org/abs/2402.09241)) on plain PyTorch in
+  `vfe/`, trained and evaluated on ImageNet VID with this repository's tooling.
+- **Method:** read the paper, build its two ideas — the location prior and the
+  size prior over a one-stage detector with pixel-level attention — on a
+  faithfully ported FCOS, check the FCOS part against mmdet 2.19.1 the way
+  every other layer of `vfe/` was checked, and judge the whole by task metrics
+  once it is trained.
+- **Not the goal:** reproducing the released code line by line. Its audit is
+  kept below because it explains the published 79.7, and because its FCOS is
+  the same mmdet FCOS this implementation is checked against.
 
-## Status (2026-09-26)
+## Status (2026-09-27)
 
-- **Audited, nothing ported.** A static read of the code, plus a CPU run of it
-  on the legacy stack. Findings below.
-- **Next: E-M0, on the local machine.** Download the checkpoint and log, check
-  that the checkpoint loads into the public code with no unexpected keys, and
-  confirm it scores 79.7 through the original code. Everything after depends on
-  the answer.
+- **Implemented and unit-tested; not yet trained.** Everything runs on CPU in
+  this container on random weights; the data, GPUs and checkpoints are on
+  your machine and Isambard.
+- **The FCOS underneath is exact.** `tools/checks/parity_fcos.py` compares the
+  head against mmdet 2.19.1 on CPU: in float64 all 82 artifacts agree to
+  1e-15 relative; in float32, forward passes to 8.5e-7, decoding to 2.4e-6
+  and gradients to 7.8e-4, the torch 1.10 → 2.10 accumulation floor
+  documented for the training-step checks in the rewrite plan.
+- **Next: a smoke run on your machine, then E-M3 on Isambard.** Commands and
+  what to look at are under *Running it*.
 
-## Audit findings (2026-09-26)
+## The paper, as read here
 
-**EOVOD is `v1.0.0` plus two files.** Its `mmdet/` is the same MMDetection
-2.19.1 fork. It adds `mmdet/models/vid/fcos_att.py` (`FCOSAtt`, 292 lines) and
+The paper's hosts (arXiv, ECVA, Springer, QUB's repository) are denied by this
+environment's network policy, so it was read through search-engine excerpts of
+the PDF. What follows is what those excerpts support; where an implementation
+detail is not in them it is marked *chosen*, and the choice is under *Design*.
+
+**Analysis.** (1) The accurate VID methods aggregate features with attention.
+(2) In two-stage detectors that is cheap: the attention runs over ~300
+proposals. (3) A one-stage detector has no proposals; FCOS's pyramid holds
+~13k pixels, and attention over all of them is unaffordable. (4) About 80% of
+a one-stage detector's head time goes on the low-level feature maps (~65% on
+the lowest), which exist for small objects. *Temporal consistency*: objects
+change gradually in location and size between consecutive frames.
+
+**Location prior network (LPN).** Given the previous frame's detections,
+those scoring above 0.5 are *validated*; their boxes are adjusted by a ratio
+*r* (0.8 for FCOS: smaller *r*, fewer pixels, faster), projected to each
+feature level by dividing by the stride, and turned into a binary foreground
+mask. Attention-based aggregation runs on those pixels only ("partial feature
+aggregation"). Without a validated box the aggregation is skipped. Queries
+are pixels of the current frame; keys are pixels from other frames of the
+video (at training time, randomly sampled reference frames).
+
+**Size prior network (SPN).** One-stage detectors assign objects to levels by
+size. After detecting at time *t*, the levels the validated boxes came from
+are recorded; for the next *T* frames the heads run only on those levels
+("if validated boxes are generated from the top level, there might not be
+small objects in the following frames"). *T* = 7 for the reported trade-off.
+SPN alone takes FCOS+LPN from 20.4 to 26.9 FPS and YOLOX+LPN from 35.8 to
+50.5, at 53.8 / 52.7 AP.
+
+**Training.** VID (15 frames per video) plus at most 2,000 DET images per
+class; SGD, batch size 32; ResNet-101 for FCOS and CenterNet, DarkNet-53 for
+YOLOX (640×640, with MixUp / Mosaic). The excerpts give no learning rate,
+epoch count or image scale for FCOS.
+
+**Results (ImageNet VID, COCO-style AP).** FCOS R-101: 49.8 → 54.1 AP with
+LPN (+4.3), 53.8 with LPN+SPN at 26.9 FPS on a V100; RDN, the best
+competitor, is 0.7 lower and ~3× slower. STPN's paper later quotes EOVOD at
+54.1 AP / 79.8 AP50. The released checkpoint scores 54.0 / 79.7 / 59.3.
+
+**Not in the excerpts:** the attention formulation, the memory's size and
+update rule, how many keys a query sees, how the first frame is handled
+beyond "skip", and whether aggregation runs before or after the FPN.
+
+## Design: paper → `vfe/`
+
+| Paper | Here | Notes |
+| :-- | :-- | :-- |
+| one-stage detector | `FCOS` / `FCOSHead` (`vfe/models/detectors/single_stage.py`, `vfe/models/dense_heads/fcos_head.py`) | ported from mmdet 2.19.1; plus `MlvlPointGenerator`, `DistancePointBBoxCoder`, `FocalLoss`, `IoULoss`, `Scale`, `open-mmlab://` URIs |
+| validated detections | `location_prior.score_thr` (0.5) | one threshold feeds both priors and the memory |
+| box ratio *r* | `location_prior.box_ratio` (0.8) | `scale_boxes` about the centre |
+| projection to a level's grid | `boxes_to_level_masks` | a cell is foreground if its centre lies in a box; a box smaller than a cell still marks the cell holding its centre |
+| partial feature aggregation | `EOVOD._enhance` + `PixelAggregator` | SELSA-style multi-head attention (16 heads), added residually to the query pixel |
+| keys from other frames | `PixelMemory` | per level: a random-replacement bank of pixel features (capacity 4096), 1024 sampled per frame |
+| size prior, interval *T* | `size_prior.interval` (7); `FCOSHead(..., level_ids=...)` | the head runs a subset of levels; `with_levels=True` reports each detection's level |
+| skip without a prior | `_enhance` passes levels through | first frame, or a frame after one with no validated box |
+
+Everything EOVOD-specific is `vfe/models/vid/eovod.py` (about 450 lines).
+
+**Choices the paper left open, and the reasons:**
+
+1. **Aggregation runs on the FPN outputs (P3–P7).** The location masks and
+   the size prior are both per pyramid level, so the FPN outputs are the
+   natural place; all levels share a channel width there, which lets one
+   aggregator serve every level (`aggregator.shared=True`, 263k parameters).
+   The released code instead attends over the backbone's C3–C5 before the
+   FPN, with a 22M-parameter module.
+2. **The size prior keeps every level from the lowest validated one upward**,
+   not exactly the set of levels boxes came from. The paper's motivation is
+   skipping low levels when there are no small objects; the high levels cost
+   almost nothing, and keeping them means an object that grows into the next
+   level is not lost until the next full frame.
+3. **A frame with no validated detection at a full frame runs every level**
+   afterwards: there is no evidence about sizes to skip on.
+4. **The first frame's prior is its own plain detection.** The test sampler
+   gives the first frame reference frames spread over the video, one of which
+   is the frame itself. They are detected plainly to seed the memory, and the
+   frame's own detections become its location prior — one extra head pass on
+   one frame per video. The memory resets at every video, not on the released
+   code's `video_id % 1000` quirk.
+5. **Memory holds the enhanced features**, as MAMBA's memory holds enhanced
+   RoI features, written from inside the validated boxes at ratio 1.0, at
+   most 512 pixels per level per frame.
+6. **Training mirrors inference with ground truth in place of detections.**
+   Keys: pixels inside the reference frames' boxes (falling back to random
+   pixels when a reference has none, so the aggregator — and DDP — see every
+   parameter used on every step). Queries: pixels inside the key frame's
+   boxes after a random jitter of ±10% in position and size (standing in for
+   the motion between frames), then shrunk by *r*. Every level runs.
+7. **Only torch's generator is used**, on the feature device, so exact
+   gradient accumulation (`RngStreams`) covers all of it. The released code
+   drew from numpy, which the per-virtual-rank swap does not cover.
+8. **The recipe follows the released code** where the paper is silent: SGD lr
+   0.001, momentum 0.9, weight decay 1e-4, gradient clipping at 35, 500
+   warmup iterations from 1/3, one image per GPU × 8, 9 epochs with ×0.1
+   after the sixth; 1000×600 images; VID references 2 within ±9 frames plus
+   DET; test-time 14 references over the video for the first frame. The paper
+   says batch 32; see *Decisions needed*.
+9. **Both metrics are reported.** `evaluation = dict(vid_style=True,
+   coco_style=True)` gives the VID AP50 with the motion breakdown (comparable
+   to MAMBA and STPN) and COCO AP / AP50 / AP75 / small / medium / large
+   (comparable to the paper). `vfe/evaluation/coco.py`, on pycocotools.
+
+## Verification so far
+
+- **FCOS vs mmdet 2.19.1** (`tools/checks/parity_fcos.py`, both sides on CPU
+  in this container; the mmdet side from the `v1.0.0` tree): forward outputs
+  on five levels, grid points and valid flags, pre-NMS candidates, post-NMS
+  detections (sorted by label, score, x1), size-range targets, the three
+  losses and every parameter gradient on a two-image batch, and the focal and
+  IoU losses alone. float64: 82/82 within 1e-15 relative (40 bit-exact).
+  float32: forward 8.5e-7, decode 2.4e-6, gradients 7.8e-4 (the
+  classification tower, whose gradient sums 12k × 30 focal terms). The harness
+  is standalone for now; it joins `run_parity.py`'s matrix when frozen on the
+  machine with the legacy environment.
+- **Unit tests** (`tests/test_one_stage.py`, `tests/test_eovod.py`,
+  `tests/test_coco_eval.py`, 20 tests, CPU, seconds): point coordinates and
+  valid flags against hand-computed values; the distance coder's round trip
+  and clipping; focal loss against its formula with index and one-hot
+  targets; IoU loss modes and the all-zero-weight case; FCOS target assignment
+  by size range on a 32×32 image; loss, decoding, level subsets and the
+  level report; box scaling; mask projection including the tiny-box rule;
+  memory capacity and replacement; the aggregator's residual form; EOVOD
+  rejecting unknown options and two-stage detectors; a training step with
+  gradients reaching the aggregator, with and without reference boxes, and
+  the same through the trainer's `train_step` with two micro-batches; four
+  frames of stateful inference (seeding, prior, restricted then full levels,
+  reset on a new video, missing `frame_id`); plain detection when nothing
+  validates; both configs building at 32,443,240 and 51,435,368 parameters;
+  and COCO-style evaluation on a synthetic annotation file (perfect
+  detections 1.0, none 0.0, shifted labels 0.0).
+- **CI-equivalent checks** pass locally: ruff, all 55 tests, no mm\* module
+  at runtime, every config building, the CLI entry points, Python 3.8 syntax
+  in `tools/checks/`, the manifest, and the sdist's contents.
+
+## Running it
+
+Configs: `configs/vid/eovod/eovod_fcos_r50_fpn_3x.py` (quick) and
+`configs/vid/eovod/eovod_fcos_r101_fpn_9x.py` (the paper's setting). Test
+frames stay in order — do not set `shuffle_video_frames`: the location prior
+comes from the previous frame and the size prior counts frames.
+
+```bash
+python -m pytest                                    # 55 tests, CPU
+
+# smoke: 300 iterations on the RTX 4060 (batch 1, no accumulation, no evaluation)
+python -m vfe.cli.train configs/vid/eovod/eovod_fcos_r50_fpn_3x.py \
+    --work-dir work_dirs/eovod_smoke --max-epochs 1 --max-iters-per-epoch 300 --no-validate
+
+# Isambard: four GH200s x 2 micro-steps = the recipe's batch of 8
+torchrun --standalone --nproc_per_node=4 -m vfe.cli.train \
+    configs/vid/eovod/eovod_fcos_r101_fpn_9x.py --launcher pytorch \
+    --accumulate 2 --work-dir work_dirs/eovod_r101_9x --seed 0
+
+torchrun --standalone --nproc_per_node=4 -m vfe.cli.test \
+    configs/vid/eovod/eovod_fcos_r101_fpn_9x.py work_dirs/eovod_r101_9x/epoch_9.pth \
+    --launcher pytorch --work-dir work_dirs/eovod_r101_9x
+```
+
+What to look at first: the log's `loss_cls` / `loss_bbox` / `loss_centerness`
+falling from about 1.1 / 0.7 / 0.65 (a fresh FCOS on 30 classes) — the first
+`loss_cls` is dominated by the 1% prior init and should drop fast; peak
+memory per GPU (three 1000×600 frames through R-101-FPN plus the attention;
+expect well under 20 GB); and seconds per iteration, from which the 9-epoch
+cost follows (MAMBA's 6x took ≈17 GPU-hours at 0.158 s/iter).
+
+Evaluation prints both metric sets. The paper's numbers to compare with are
+COCO AP 53.8 / AP50 ≈ 79.7 (FCOS+LPN+SPN, R-101); `size_prior=None` in the
+config gives the LPN-only model (54.1 in the paper) at lower speed.
+
+**Optional: the released checkpoint's FCOS.** Its `detector.*` keys match
+this implementation's names (the head's `cls_convs.N.{conv,gn}`, `conv_cls`,
+`conv_reg`, `conv_centerness`, `scales.N.scale`), so
+`load_checkpoint(model, ckpt)` loads the backbone, FPN and head, logs
+`memory.*` as unexpected and `aggregators.*` as missing, and evaluating gives
+a plain-FCOS score from weights trained with the released aggregation. It is
+not a check of this implementation, since the aggregator differs by design.
+
+## Milestones
+
+- [x] **9a — one-stage machinery**, checked against mmdet (above).
+- [x] **9b — EOVOD's modules**, unit-tested on a tiny FCOS.
+- [x] **9c — COCO-style evaluator**, on a synthetic annotation file.
+- [ ] **9d — smoke on your machine:** the unit tests, a few hundred training
+  iterations of the R-50 config on real data, `python -m vfe.cli.test ...
+  --max-videos 2` on the resulting checkpoint (stateful inference on real
+  videos), and `parity_fcos.py` against your `vfe` conda env; then freeze it
+  into `run_parity.py`'s matrix.
+- [ ] **E-M2 — a short Isambard run** (500 iterations of the R-101 config,
+  batch 8): speed, peak memory, the LR schedule, the loss curve.
+- [ ] **E-M3 — the full R-101 9x run → COCO AP within ±0.5 of 53.8 and AP50
+  of 79.7**, plus the VID AP50 for the MAMBA/STPN table.
+- [ ] **Ablations the paper reports**, if the budget allows: `size_prior=None`
+  (54.1 AP), *r* ∈ {0.6, 0.8, 1.0}, *T* ∈ {3, 7, 15}; and this
+  implementation's own: `aggregator.shared=False`, memory sizes.
+- [ ] **Speed measurement** on a fixed GPU: FPS with and without the size
+  prior, since that is the paper's second claim.
+
+## Decisions needed
+
+1. **Batch and learning rate.** The paper states batch 32; the released
+   config has batch 8 at lr 0.001, and produced the released 79.7. The configs
+   follow the released recipe. Train the paper's batch (four GH200s ×
+   `--accumulate 8`) at lr 0.004 instead?
+2. **Memory defaults** (4096 / 1024 / 512 per level): the paper gives none.
+   Keep, or run E-M2 at two sizes and pick by loss?
+3. **Isambard budget:** E-M2 ≈ 0.2 GPU-hours; E-M3 estimated from E-M2
+   (likely 10–20 GPU-hours); each ablation the same again.
+4. **Acceptance:** ±0.5 COCO AP against the paper's 53.8, as for the other
+   models' ±0.5 AP50?
+
+## The released code (audit, 2026-09-26)
+
+Source: [guanxiongsun/EOVOD](https://github.com/guanxiongsun/EOVOD) at
+`84576bb`. Its `mmdet/` is `v1.0.0`'s MMDetection 2.19.1 fork plus two files:
+`mmdet/models/vid/fcos_att.py` (`FCOSAtt`, 292 lines) and
 `mmdet/models/memory/mpn.py` (`MPN`, 346 lines). Of the 33 other files that
-differ, 20 differ only in whitespace; the other 13 carry about 130 changed
-lines:
+differ, 20 differ only in whitespace; the rest give `MemoryBank` a SELSA
+aggregator, make evaluation COCO-only, drop the frame shuffle, and change
+registrations.
 
-- `MemoryBank` takes `in_channels` and owns a `SelsaAggregator`;
-  `forward(x, ref)` returns `x + aggregator(x, ref)`. Sampling and updating are
-  v1's (`torch.randperm` on the CPU generator).
-- `CocoVideoDataset.evaluate` is COCO-style only, and `ImagenetVIDDataset`
-  predates `shuffle_video_frames`, so EOVOD evaluates frames in order.
-  (`mamba/vid_eval.py` differs too, but EOVOD never calls it.)
-- Registrations: `FCOSAtt` and `MPN` in place of MAMBA and STPN.
-
-Everything else EOVOD runs is stock 2.19.1 code that `v1.0.0` already holds:
-FCOS, FocalLoss, IoULoss, the point generator, the data pipeline, the samplers.
-
-**The public repository does not import.** `mmdet/models/__init__.py` imports
-`CenterNetAtt` from `mmdet.models.vid`, which does not define it, so
-`import mmdet.models` raises `ImportError`. (`tools/speed_test.py` also names a
-`YOLOAtt` that does not exist.) Removing `CenterNetAtt` from the two lines that
-name it is enough to run everything else.
-
-**It runs on the existing legacy stack.** EOVOD's README pins Python 3.7 and
-PyTorch 1.8.0; with that two-line patch it runs as-is on the `vfe` legacy stack
-(Python 3.8, PyTorch 1.10.1, mmcv-full 1.3.17). On CPU with random weights, both
-configs build, a training step runs forward and backward, and stateful inference
-carries its memory from frame to frame. One legacy environment can therefore be
-the oracle for both projects, with `mmdet` resolving to whichever checkout a
-harness needs.
-
-| config | parameters | of which MPN | memory on | training pixels |
-| :-- | --: | --: | :-- | :-- |
-| `fcos_att_r50_fpn_3x_vid_caffe_random.py` | 54,214,504 | 22,034,432 | C3–C5 | random |
-| `fcos_att_r101_fpn_9x_vid_caffe_random_level2_imagenet.py` | 72,156,008 | 20,983,808 | C4–C5 | random |
-
-The R-101 config is the one the README trains; its released checkpoint is
-labelled "FCOS+LPN".
-
-**The model.** `FCOSAtt` wraps a stock FCOS detector (caffe-style ResNet, FPN
-with `on_output` extra convs, `FCOSHead` with GroupNorm, focal / IoU /
-centerness losses) and inserts `MPN` between the backbone and the FPN
-(`before_fpn=True`). MPN keeps one `MemoryBank` per backbone level from
-`start_level` on; every pixel of that level's feature map attends over pixels
-drawn from the memory, through a SELSA aggregator added residually.
-
-- *Training:* the key frame's pixels attend over up to 2,000 randomly chosen
-  pixels from each of its two reference frames (`np.random.shuffle`). A
-  box-based sampling mode exists, but no config uses it.
-- *Testing:* after each frame, pixels inside detections scoring above 0.3 are
-  written to memory: up to 300 per box (`np.random.choice`) and 1,000 per frame,
-  or the 50 highest-norm pixels when nothing qualifies. Each frame reads 2,000
-  of up to 20,000 stored pixels at random.
-- *The paper's terms:* nothing in the code is called LPN or SPN.
-  `MPN.filter_with_mask`, the natural place for a location prior, is always
-  called without a mask, so every pixel queries the memory; `start_level`
-  statically skips the low levels. Whether this is the model behind the README's
-  "FCOS+LPN" row is for the author to say. A checkpoint with parameters the
-  public code lacks will show up as unexpected keys at E-M0.
-
-**How 79.7 was measured.**
-
-- *COCO-style*, not the ImageNet VID (FGFA) metric MAMBA and STPN report:
-  mmdet's `CocoDataset.evaluate('bbox')`, which is pycocotools' COCOeval over
-  VID val (maxDets 100/300/1000). The published AP 54.0 / AP50 79.7 / AP75 59.3
-  (small / medium / large 9.8 / 26.6 / 60.4) are therefore not comparable with
-  MAMBA's 83.8 or STPN's 85.2. Once `vfe` has the COCO path, it can report both.
-- *Frames in order.* At each video's first frame, its 14 references over ±7
-  frames (`test_with_adaptive_stride`, which `vfe` already has) are detected and
-  written into memory.
-- **Memory is reset only when a video's number is a multiple of 1000**
-  (`int(name.split('_')[-1]) % 1000 == 0`). VID val numbers its 555 snippets in
-  178 blocks (`…_00000000` to `…_00000005`, then `…_00001000`, …; 1 to 46
-  snippets per block), so 377 of the 555 snippets start with the memory the
-  earlier snippets in their block left behind. Reproducing 79.7 requires
-  reproducing this, and a comparison with methods that treat every snippet
-  independently should say so.
-- *Stochastic*, like MAMBA's: both the pixel choice (numpy) and the memory read
-  (torch) draw from global generators.
-- *A parity trap to expect:* boxes reach feature-map cells as
-  `int(box * scale_factor / stride)` after a rescale round trip, so float noise
-  between stacks can move a cell: the pixel-level counterpart of 4f's NMS flips.
-
-**Training recipe (from the config).** SGD, lr 1e-3, momentum 0.9, weight decay
-1e-4, gradient clipping at 35; 500-iteration linear warmup from 1/3; ×0.1 after
-epoch 6 of 9; one image per GPU, eight GPUs in the README's example. Data: VID
-(2 references within ±9 frames, bilateral uniform) plus the DET 30-class subset,
-as for MAMBA. Backbone: caffe-style ResNet-101 (BGR, mean subtraction only) from
-`open-mmlab://detectron/resnet101_caffe`. The batch actually used, the seed, the
-speed and the per-epoch scores come from the log at E-M0.
-
-## What `vfe` has, and what it needs
-
-**Already ported:** ResNet in caffe style with frozen stages and BN, FPN
-(including `on_output` and `relu_before_extra_convs`), GroupNorm,
-`multiclass_nms` with `score_factors`, `bbox2result`, v1's `MemoryBank`, the VID
-dataset with in-order frames, every transform in EOVOD's pipelines, the four
-reference samplers, the group and video samplers, the SGD constructor, the LR
-schedule and the training loop. Caution: caffe style and FPN's extra convs were
-ported with the rest, but no parity check has exercised them. MAMBA uses
-pytorch style and a `ChannelMapper`; STPN uses an FPN whose extra level is a max
-pool.
-
-**To port:**
-
-| piece | source (`v1.0.0` unless noted) | lines | note |
-| :-- | :-- | --: | :-- |
-| FCOS head | `dense_heads/{fcos_head,anchor_free_head,base_dense_head,dense_test_mixins}.py` | 453 / 350 / 526 / 206 | only the paths FCOS takes: GroupNorm, `Scale`, centerness, regress ranges, `get_bboxes` with score factors |
-| point generator | `core/anchor/point_generator.py` | 263 | `MlvlPointGenerator` |
-| `FocalLoss` | `losses/focal_loss.py` | 182 | the original ran mmcv's compiled kernel on CUDA and the Python formula on CPU; the port is the formula, so CUDA agreement is to float noise, not exact |
-| `IoULoss` | `losses/iou_loss.py` | part of 474 | `mode='log'`, `eps=1e-6` |
-| single-stage detector | `detectors/{single_stage,fcos}.py` | 171 / 19 | plus `distance2bbox` |
-| `SelsaAggregator` | `aggregators/selsa_aggregator.py` | 77 | dropped from 2.0 with SELSA |
-| EOVOD's `MemoryBank` | EOVOD `memory/memory_bank.py` | 81 | v1's, plus `in_channels` and the aggregator |
-| `MPN`, `FCOSAtt` | EOVOD | 346 / 292 | stateful test, numpy draws |
-| COCO-style evaluator | `datasets/coco.py` (`evaluate`, `results2json`) | — | on pycocotools, already a dependency |
-| `open-mmlab://` | mmcv's `open_mmlab.json` | 2 entries | `detectron/resnet{50,101}_caffe`; dropped from 2.0 because nothing used it |
-
-**One change to existing code.** Exact gradient accumulation swaps *torch*
-generator states per virtual rank (`RngStreams` in `vfe/engine/trainer.py`);
-numpy's and Python's are per process. MAMBA and STPN draw only from torch
-inside the model, but MPN's training step calls `np.random.shuffle`, so
-`--accumulate` would give EOVOD's micro-steps one shared numpy stream where the
-original ranks each had their own. Add numpy's state to the per-rank swap, and
-extend the 1-process × 2-micro-step vs 2-process bit-identity check to an
-EOVOD model.
+- **It does not import as published:** `mmdet/models/__init__.py` names a
+  `CenterNetAtt` defined nowhere (and `tools/speed_test.py` a `YOLOAtt`).
+  With those two references removed it runs on the `vfe` legacy stack
+  (Python 3.8, torch 1.10.1, mmcv-full 1.3.17) rather than its pinned torch
+  1.8: both configs build, train a step and run stateful inference on CPU.
+- **Its model:** stock FCOS with `MPN` between backbone and FPN
+  (`before_fpn=True`): one `MemoryBank` per backbone level from
+  `start_level` (C4–C5 for the released R-101 config), every pixel attending
+  over up to 2,000 random pixels of the memory through a SELSA aggregator,
+  residually. Training keys: 2,000 random pixels per reference frame per level
+  (`np.random`). Test writes: pixels inside detections scoring above 0.3, at
+  most 300 per box and 1,000 per frame, else the 50 highest-norm pixels.
+  Nothing is called LPN or SPN; `filter_with_mask` is always called without a
+  mask, so every pixel is a query, and no level is ever skipped.
+- **How its 79.7 was measured:** COCO-style AP50 (54.0 / 79.7 / 59.3; small /
+  medium / large 9.8 / 26.6 / 60.4), frames in order, 14 references over ±7
+  frames at the first frame, and **the memory reset only when the video's
+  number is a multiple of 1000**: VID val numbers its 555 snippets in 178
+  blocks, so 377 snippets start with memory left by earlier snippets.
+- **Recipe (its config):** SGD lr 0.001, momentum 0.9, weight decay 1e-4,
+  clipping at 35, warmup 500 from 1/3, ×0.1 after epoch 6 of 9, one image per
+  GPU on eight GPUs; caffe-style ResNet-101 from
+  `open-mmlab://detectron/resnet101_caffe`. The checkpoint and log are on
+  Google Drive, linked from its README.
 
 ## Where each part can run
 
-- **Cloud sessions (verified 2026-09-26).** Both stacks build on CPU from PyPI
-  alone, so both sides of every CPU parity harness on synthetic inputs and
-  random weights can run there. The legacy side took 3 min 20 s (recipe below).
-  On the `vfe` side, PyPI's x86_64 `torch==2.10.0` is the same `+cu128` build
-  `pyproject.toml` pins, and the 35 unit tests pass. The egress policy blocks
-  Hugging Face, Google Drive, `download.openmmlab.com` and
-  `download.pytorch.org`, so there are no checkpoints, pretrained weights or
-  data there.
-- **The local machine:** the real data and checkpoints, CUDA comparisons,
-  freezing goldens.
-- **Isambard:** full evaluation and training.
-
-The legacy stack without conda (Python 3.8 from uv; PyPI's torch 1.10.1 is the
-cu102 build and runs on CPU):
+- **Cloud sessions (this container):** both stacks build on CPU from PyPI
+  alone — the legacy one in 3 min 20 s with the recipe below — so the parity
+  harnesses and the unit tests run here. The network policy blocks Hugging
+  Face, Google Drive, `download.openmmlab.com`, `download.pytorch.org` and the
+  paper's hosts: no checkpoints, pretrained weights, data or PDF.
+- **Your machine:** the data and checkpoints, CUDA comparisons, freezing
+  goldens, the `vfe` conda env.
+- **Isambard:** evaluation and training.
 
 ```bash
 uv python install 3.8 && uv venv --python 3.8 legacy38
@@ -180,70 +298,27 @@ uv pip install --python $PY torch==1.10.1 torchvision==0.11.2
 uv pip install --python $PY numpy==1.23.5 "opencv-python-headless<5" "matplotlib<3.8" pycocotools \
     "scipy<1.11" yapf==0.32.0 addict terminaltables pyyaml packaging Pillow six "setuptools<60" wheel ninja
 MMCV_WITH_OPS=1 FORCE_CUDA=0 MAX_JOBS=4 uv pip install --python $PY --no-build-isolation mmcv-full==1.3.17
-# mmdet comes from a checkout on PYTHONPATH: the v1.0.0 worktree, or EOVOD with the import patch
+# mmdet comes from a checkout on PYTHONPATH: the v1.0.0 tree, or EOVOD with the import patch
+PYTHONPATH=/path/to/v1.0.0 $PY tools/checks/parity_fcos.py --impl mmdet --out fcos_mmdet.pt
+python tools/checks/parity_fcos.py --impl vfe --out fcos_vfe.pt
+python tools/checks/parity_fcos.py --compare fcos_mmdet.pt fcos_vfe.pt        # add --dtype float64 to both runs for the exact check
 ```
-
-## Milestones
-
-- [ ] **E-M0 — the original, on the local machine.**
-  1. Download the R-101 checkpoint and its log from the Drive folder in EOVOD's
-     README, and mirror both to the Hugging Face model repository beside
-     MAMBA's and STPN's, where Isambard can fetch them and they outlive the
-     Drive link.
-  2. Check out EOVOD at `84576bb` beside this repository (for example
-     `~/code/eovod.legacy`) and drop `CenterNetAtt` from
-     `mmdet/models/__init__.py`. Use the `vfe` conda environment with that
-     checkout first on `PYTHONPATH`.
-  3. Load the checkpoint into the R-101 config's `FCOSAtt`: expect 0 missing
-     and 0 unexpected keys. An unexpected key is a module the public code
-     lacks, and stops the plan until it is found.
-  4. Evaluate on VID val through the original code
-     (`python tools/test.py CONFIG --checkpoint CKPT --eval bbox`): expect AP50
-     79.7 and AP 54.0, ±0.2. Fill in *Reproduction facts* from the log.
-- [ ] **9a — one-stage machinery:** point generator, `Scale`, `distance2bbox`,
-  FocalLoss, IoULoss, the FCOS head (forward, targets and loss, `get_bboxes`),
-  the single-stage detector, `open-mmlab://`. One harness per layer, as in
-  Phase 4: bit-exact on CPU wherever the arithmetic is elementwise, forward
-  passes only on CUDA.
-- [ ] **9b — EOVOD's modules:** `SelsaAggregator`, EOVOD's `MemoryBank`, `MPN`,
-  `FCOSAtt`. Random weights with both generators aligned: memory contents
-  exact, the training step's losses and CPU gradients, and multi-frame test
-  detections compared as sets, across a %1000 reset boundary.
-- [ ] **9c — COCO-style evaluator**, checked on synthetic detections over the
-  full val set, as 5a was.
-- [ ] **E-M1 — the released checkpoint through `vfe` on Isambard → AP50 79.7
-  ± 0.2.** MAMBA's M1 took ≈1.35 GPU-hours.
-- [ ] **9d — training:** numpy streams per virtual rank; training-step parity
-  from the released checkpoint on real batches, as 6c.
-- [ ] **E-M2, E-M3 — a short run, then the full 9x schedule**, overlaid on the
-  original log. Budget once E-M2 has measured the speed; for scale, MAMBA's 6x
-  took ≈17 GPU-hours and STPN's 9x ≈40.
-- [ ] **Freeze** the EOVOD variants into `run_parity.py` before the EOVOD
-  checkout is retired.
-
-## Decisions needed
-
-1. **Scope:** only the R-101 model, the one with a checkpoint? The R-50 config
-   has no released weights, and the paper's CenterNet and YOLOX variants have
-   no code (`CenterNetAtt` and `YOLOAtt` are named but never defined).
-2. **Checkpoint hosting:** mirror the Drive files to Hugging Face?
-3. **Cross-snippet memory:** reproduce it for E-M1 (needed to reach 79.7), and
-   also report the score with the memory reset at every snippet?
-4. **Isambard budget:** E-M1 ≈ 2 GPU-hours now; training after E-M2.
-5. **Acceptance:** E-M1 within ±0.2 AP50, training within ±0.5, as for MAMBA
-   and STPN.
-
-## Reproduction facts (from the original log)
-
-To be filled in at E-M0: hardware and batch, iterations per epoch, speed, seed,
-per-epoch AP, final AP.
 
 ## Progress log
 
+- **2026-09-27 (implemented)** — EOVOD built from the paper: FCOS ported from
+  mmdet 2.19.1 and checked exact against it in float64 (82 artifacts,
+  1e-15) and to the float32 accumulation floor; `EOVOD` with the location
+  prior, the size prior, per-level pixel memory and SELSA-style residual
+  attention over the FPN outputs; COCO-style evaluation beside the VID
+  metric; two configs; 19 unit tests. The paper's hosts are blocked here, so
+  it was read through search excerpts; the open details and the choices made
+  for them are listed under *Design*. Nothing trained yet: next is a smoke
+  run on the local machine and E-M2/E-M3 on Isambard.
 - **2026-09-26 (audit)** — Phase 9 opened. EOVOD's public code is `v1.0.0`'s
-  MMDetection fork plus `FCOSAtt` and `MPN`. It fails to import (`CenterNetAtt`
-  is imported but never defined); with that fixed it runs on the existing
-  legacy stack, so one oracle environment serves both projects. Its 79.7 is
-  COCO-style AP50, measured with memory carried across 377 of VID val's 555
-  snippets. Both stacks were built from PyPI in a cloud container, so CPU parity
-  work can happen there. Nothing ported yet; next is E-M0 on the local machine.
+  MMDetection fork plus `FCOSAtt` and `MPN`. It fails to import
+  (`CenterNetAtt` is imported but never defined); with that fixed it runs on
+  the existing legacy stack, so one oracle environment serves both projects.
+  Its 79.7 is COCO-style AP50, measured with memory carried across 377 of
+  VID val's 555 snippets. Both stacks were built from PyPI in a cloud
+  container, so CPU parity work can happen there.
