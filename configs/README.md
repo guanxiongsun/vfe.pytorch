@@ -1,6 +1,6 @@
 # Configs
 
-Four trainable configs, plus the `_base_` files they inherit. The syntax is
+Seven trainable configs, plus the `_base_` files they inherit. The syntax is
 MMDetection's, and `vfe.config.Config` resolves it identically — that
 equivalence is itself one of the parity checks (`run_parity.py check config`).
 
@@ -10,9 +10,21 @@ equivalence is itself one of the parity checks (`run_parity.py check config`).
 | [`vid/mamba/mamba_r101_dc5_3x.py`](vid/mamba/mamba_r101_dc5_3x.py) | the same, 3 epochs | — |
 | [`vid/stpn/stpn_swint_adam_9x.py`](vid/stpn/stpn_swint_adam_9x.py) | STPN, Swin-T, 9 epochs | [`stpn_swint_adam_9x`](https://huggingface.co/guanxiongsun/vfe.pytorch/tree/main/work_dirs/stpn_swint_adam_9x) — AP50 85.2 |
 | [`vid/stpn/stpn_swins_adam_9x.py`](vid/stpn/stpn_swins_adam_9x.py) | STPN, Swin-S, 9 epochs | none — see below |
+| [`vid/eovod/eovod_fcos_r101_fpn_3x.py`](vid/eovod/eovod_fcos_r101_fpn_3x.py) | EOVOD on FCOS, ResNet-101-FPN, the paper's recipe (3 epochs at batch 4) | none — untrained, see below |
+| [`vid/eovod/eovod_fcos_r101_fpn_9x.py`](vid/eovod/eovod_fcos_r101_fpn_9x.py) | the same, the released checkpoint's recipe (9 epochs at batch 8) | — |
+| [`vid/eovod/eovod_fcos_r50_fpn_3x.py`](vid/eovod/eovod_fcos_r50_fpn_3x.py) | the same on ResNet-50, 3 epochs | — |
 
 Both released checkpoints load into this code unchanged and reproduce their
 published scores to within 0.02 AP50.
+
+**EOVOD is implemented from its paper, not ported**, and has not been trained
+here yet; [`docs/eovod-plan.md`](../docs/eovod-plan.md) has the design, what
+is verified, and the run plan. Its test set keeps frames in order (no
+`shuffle_video_frames`): the location prior reads the previous frame, and the
+size prior counts frames. The size prior is inference-only, so one trained
+model gives both of the paper's rows: as configured (`size_prior.interval=7`)
+and LPN-only (`--cfg-options model.size_prior=None`). It evaluates with both
+the VID metric and COCO-style AP, which is what the paper reports.
 
 ## Two things the configs do not say
 
@@ -46,6 +58,7 @@ checkpoint is published. In 1.x this file existed but was empty.
 | [`_base_/schedules/schedule_1x.py`](_base_/schedules/schedule_1x.py) | SGD, the step schedule and warmup |
 | [`_base_/datasets/vid/imagenet_vid_multi_frame.py`](_base_/datasets/vid/imagenet_vid_multi_frame.py) | ImageNet VID + DET, reference-frame sampling, the train and test pipelines |
 | [`_base_/models/vid/faster_rcnn_r50_dc5.py`](_base_/models/vid/faster_rcnn_r50_dc5.py) | the Faster R-CNN DC5 detector MAMBA wraps |
+| [`_base_/models/vid/fcos_r50_fpn.py`](_base_/models/vid/fcos_r50_fpn.py) | the FCOS detector EOVOD wraps (caffe-style ResNet, FPN P3–P7, GroupNorm head) |
 
 Configs for models this release does not implement — SELSA, the single-frame
 baselines, and MMDetection's 700-odd COCO configs — are at the `v1.0.0` tag.

@@ -1,5 +1,5 @@
-"""Detection primitives that are not ``nn.Module``s: anchors, box coding,
-assignment, sampling and NMS post-processing.
+"""Detection primitives that are not ``nn.Module``s: anchors and points, box
+coding, assignment, sampling and NMS post-processing.
 
 Importing this package populates the registries in :mod:`vfe.core.builder`.
 """
@@ -10,11 +10,13 @@ from .bbox import (
     BaseSampler,
     BboxOverlaps2D,
     DeltaXYWHBBoxCoder,
+    DistancePointBBoxCoder,
     MaxIoUAssigner,
     PseudoSampler,
     RandomSampler,
     SamplingResult,
     bbox2delta,
+    bbox2distance,
     bbox2result,
     bbox2roi,
     bbox_flip,
@@ -22,6 +24,7 @@ from .bbox import (
     bbox_mapping_back,
     bbox_overlaps,
     delta2bbox,
+    distance2bbox,
     roi2bbox,
 )
 from .builder import (
@@ -38,11 +41,13 @@ from .builder import (
     build_prior_generator,
     build_sampler,
 )
+from .point_generator import MlvlPointGenerator
 from .post_processing import multiclass_nms
-from .utils import filter_scores_and_topk, multi_apply, select_single_mlvl, unmap
+from .utils import filter_scores_and_topk, multi_apply, reduce_mean, select_single_mlvl, unmap
 
 __all__ = [
     "AnchorGenerator",
+    "MlvlPointGenerator",
     "images_to_levels",
     "anchor_inside_flags",
     "AssignResult",
@@ -54,8 +59,11 @@ __all__ = [
     "BboxOverlaps2D",
     "bbox_overlaps",
     "DeltaXYWHBBoxCoder",
+    "DistancePointBBoxCoder",
     "bbox2delta",
     "delta2bbox",
+    "distance2bbox",
+    "bbox2distance",
     "bbox2result",
     "bbox2roi",
     "roi2bbox",
@@ -79,4 +87,5 @@ __all__ = [
     "unmap",
     "select_single_mlvl",
     "filter_scores_and_topk",
+    "reduce_mean",
 ]

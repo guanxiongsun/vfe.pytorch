@@ -3,6 +3,7 @@
 from .builders import build_activation_layer, build_conv_layer, build_norm_layer
 from .conv_module import ConvModule
 from .drop import DropPath, build_dropout
+from .scale import Scale
 from .transformer import FFN, AdaptivePadding, PatchEmbed, PatchMerging, to_2tuple
 from .weight_init import (
     bias_init_with_prob,
@@ -20,6 +21,7 @@ __all__ = [
     "build_dropout",
     "ConvModule",
     "DropPath",
+    "Scale",
     "AdaptivePadding",
     "PatchEmbed",
     "PatchMerging",

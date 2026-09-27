@@ -31,7 +31,7 @@ import numpy as np
 from vfe.datasets.builder import DATASETS
 from vfe.datasets.cocovid import CocoVID
 from vfe.datasets.pipelines import Compose
-from vfe.evaluation import do_vid_evaluation
+from vfe.evaluation import do_coco_bbox_evaluation, do_vid_evaluation
 
 __all__ = ["ImagenetVIDDataset"]
 
@@ -353,10 +353,19 @@ class ImagenetVIDDataset:
 
     # ---- evaluation ----------------------------------------------------------
 
-    def evaluate(self, results, vid_style: bool = True, **kwargs) -> dict[str, float]:
-        """ImageNet VID AP50 (see :func:`vfe.evaluation.do_vid_evaluation`)."""
-        if not vid_style:
-            raise NotImplementedError(
-                "COCO-style evaluation is not ported; the VID configs use vid_style=True"
-            )
-        return do_vid_evaluation(self, results)
+    def evaluate(self, results, vid_style: bool = True, coco_style: bool = False,
+                 classwise: bool = False, **kwargs) -> dict[str, float]:
+        """ImageNet VID AP50 (:func:`vfe.evaluation.do_vid_evaluation`) and/or
+        COCO-style box AP (:func:`vfe.evaluation.do_coco_bbox_evaluation`).
+
+        MAMBA and STPN report the former; EOVOD's published numbers are the
+        latter. Both may be requested at once.
+        """
+        if not vid_style and not coco_style:
+            raise ValueError("evaluate needs vid_style and/or coco_style")
+        metrics: dict[str, float] = {}
+        if vid_style:
+            metrics.update(do_vid_evaluation(self, results))
+        if coco_style:
+            metrics.update(do_coco_bbox_evaluation(self, results, classwise=classwise))
+        return metrics

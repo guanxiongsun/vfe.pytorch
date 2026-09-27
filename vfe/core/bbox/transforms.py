@@ -14,7 +14,48 @@ __all__ = [
     "bbox2roi",
     "roi2bbox",
     "bbox2result",
+    "distance2bbox",
+    "bbox2distance",
 ]
+
+
+def distance2bbox(
+    points: torch.Tensor, distance: torch.Tensor, max_shape: Sequence[int] | None = None
+) -> torch.Tensor:
+    """Points ``(N, 2)`` plus ``(left, top, right, bottom)`` distances ``(N, 4)``
+    -> boxes ``(N, 4)``, clipped to ``max_shape`` ``(H, W[, C])`` if given.
+
+    The anchor-free decode: FCOS predicts how far each box edge is from the
+    point that predicts it.
+    """
+    x1 = points[..., 0] - distance[..., 0]
+    y1 = points[..., 1] - distance[..., 1]
+    x2 = points[..., 0] + distance[..., 2]
+    y2 = points[..., 1] + distance[..., 3]
+    bboxes = torch.stack([x1, y1, x2, y2], -1)
+    if max_shape is not None:
+        if bboxes.dim() != 2:
+            raise ValueError("batched decoding with max_shape is not ported")
+        bboxes[:, 0::2].clamp_(min=0, max=max_shape[1])
+        bboxes[:, 1::2].clamp_(min=0, max=max_shape[0])
+    return bboxes
+
+
+def bbox2distance(
+    points: torch.Tensor, bbox: torch.Tensor, max_dis: float | None = None, eps: float = 0.1
+) -> torch.Tensor:
+    """Inverse of :func:`distance2bbox`; with ``max_dis`` the distances are
+    clamped to ``[0, max_dis - eps]``."""
+    left = points[:, 0] - bbox[:, 0]
+    top = points[:, 1] - bbox[:, 1]
+    right = bbox[:, 2] - points[:, 0]
+    bottom = bbox[:, 3] - points[:, 1]
+    if max_dis is not None:
+        left = left.clamp(min=0, max=max_dis - eps)
+        top = top.clamp(min=0, max=max_dis - eps)
+        right = right.clamp(min=0, max=max_dis - eps)
+        bottom = bottom.clamp(min=0, max=max_dis - eps)
+    return torch.stack([left, top, right, bottom], -1)
 
 
 def bbox_flip(

@@ -7,6 +7,9 @@ reference implementations of
 
 - **[MAMBA](https://arxiv.org/abs/2401.09923)** — Multi-level Aggregation via Memory Bank (AAAI 2021)
 - **[STPN](https://arxiv.org/abs/2402.02574)** — Spatio-temporal Prompting Network (ICCV 2023)
+- **[EOVOD](https://arxiv.org/abs/2402.09241)** — Efficient One-stage Video Object Detection by
+  Exploiting Temporal Consistency (ECCV 2022): implemented from the paper on FCOS,
+  **not yet trained here** — see [docs/eovod-plan.md](docs/eovod-plan.md)
 
 together with the ImageNet VID data and annotations needed to train and
 evaluate them, since the official dataset links are no longer reachable.
@@ -117,7 +120,7 @@ Slurm scripts for Isambard-AI are in [tools/isambard/](tools/isambard/).
 ## Tests and parity
 
 ```bash
-python -m pytest                       # 35 fast CPU tests, no data needed
+python -m pytest                       # 61 fast CPU tests, no data needed
 python tools/checks/run_parity.py check --all
 ```
 

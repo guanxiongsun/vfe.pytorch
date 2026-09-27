@@ -23,9 +23,16 @@ from .builder import (
     build_roi_extractor,
     build_shared_head,
 )
-from .dense_heads import AnchorHead, RPNHead
-from .detectors import BaseDetector, FasterRCNN, TwoStageDetector, parse_losses
-from .losses import Accuracy, CrossEntropyLoss, L1Loss, SmoothL1Loss, accuracy
+from .dense_heads import AnchorFreeHead, AnchorHead, FCOSHead, RPNHead
+from .detectors import (
+    FCOS,
+    BaseDetector,
+    FasterRCNN,
+    SingleStageDetector,
+    TwoStageDetector,
+    parse_losses,
+)
+from .losses import Accuracy, CrossEntropyLoss, FocalLoss, IoULoss, L1Loss, SmoothL1Loss, accuracy
 from .memory import MemoryBank
 from .necks import FPN, ChannelMapper
 from .roi_heads import (
@@ -38,7 +45,7 @@ from .roi_heads import (
     SingleRoIExtractor,
     StandardRoIHead,
 )
-from .vid import MAMBA, BaseVideoDetector
+from .vid import EOVOD, MAMBA, STPN, BaseVideoDetector
 
 __all__ = [
     "MODELS",
@@ -69,9 +76,13 @@ __all__ = [
     "FPN",
     "AnchorHead",
     "RPNHead",
+    "AnchorFreeHead",
+    "FCOSHead",
     "BaseDetector",
     "TwoStageDetector",
     "FasterRCNN",
+    "SingleStageDetector",
+    "FCOS",
     "parse_losses",
     "BaseRoIExtractor",
     "SingleRoIExtractor",
@@ -85,7 +96,11 @@ __all__ = [
     "MemoryBank",
     "BaseVideoDetector",
     "MAMBA",
+    "STPN",
+    "EOVOD",
     "CrossEntropyLoss",
+    "FocalLoss",
+    "IoULoss",
     "SmoothL1Loss",
     "L1Loss",
     "Accuracy",

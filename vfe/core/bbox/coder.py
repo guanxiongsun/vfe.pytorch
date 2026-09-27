@@ -18,7 +18,7 @@ import torch
 
 from vfe.core.builder import BBOX_CODERS
 
-__all__ = ["DeltaXYWHBBoxCoder", "bbox2delta", "delta2bbox"]
+__all__ = ["DeltaXYWHBBoxCoder", "DistancePointBBoxCoder", "bbox2delta", "delta2bbox"]
 
 
 def bbox2delta(
@@ -165,3 +165,42 @@ class DeltaXYWHBBoxCoder:
             f"{self.__class__.__name__}(target_means={self.means}, "
             f"target_stds={self.stds}, clip_border={self.clip_border})"
         )
+
+
+@BBOX_CODERS.register_module()
+class DistancePointBBoxCoder:
+    """Anchor-free parameterisation (port of mmdet's ``DistancePointBBoxCoder``):
+    a box is the four distances ``(left, top, right, bottom)`` from the point
+    that predicts it. See :func:`vfe.core.bbox.transforms.distance2bbox`."""
+
+    def __init__(self, clip_border: bool = True):
+        self.clip_border = clip_border
+
+    def encode(
+        self, points: torch.Tensor, gt_bboxes: torch.Tensor, max_dis: float | None = None,
+        eps: float = 0.1,
+    ) -> torch.Tensor:
+        from .transforms import bbox2distance
+
+        if points.size(0) != gt_bboxes.size(0):
+            raise ValueError(f"count mismatch: {points.size(0)} vs {gt_bboxes.size(0)}")
+        if points.size(-1) != 2 or gt_bboxes.size(-1) != 4:
+            raise ValueError("encode expects (N, 2) points and (N, 4) boxes")
+        return bbox2distance(points, gt_bboxes, max_dis, eps)
+
+    def decode(
+        self, points: torch.Tensor, pred_bboxes: torch.Tensor,
+        max_shape: Sequence[int] | None = None,
+    ) -> torch.Tensor:
+        from .transforms import distance2bbox
+
+        if points.size(0) != pred_bboxes.size(0):
+            raise ValueError(f"count mismatch: {points.size(0)} vs {pred_bboxes.size(0)}")
+        if points.size(-1) != 2 or pred_bboxes.size(-1) != 4:
+            raise ValueError("decode expects (N, 2) points and (N, 4) distances")
+        if not self.clip_border:
+            max_shape = None
+        return distance2bbox(points, pred_bboxes, max_shape)
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(clip_border={self.clip_border})"

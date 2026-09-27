@@ -7,6 +7,11 @@
 > legacy CUDA gradients are not trusted on this machine. For how to *run* the
 > parity checks today, see [parity.md](parity.md); for what 2.0 is, see the
 > [README](../README.md).
+>
+> The log stops on 2026-09-18. The [Epilogue](#epilogue-2026-09-20) at the end
+> records what changed between that and the 2.0.0 release, including a
+> decision below that was reversed, and what is still open. The next phase,
+> EOVOD, is tracked in [eovod-plan.md](eovod-plan.md).
 
 Tracking doc for migrating this codebase off the mmlab stack (mmdet / mmcv / mmengine)
 to a **pure-PyTorch** implementation. Update the checkboxes and the Progress Log as work proceeds.
@@ -101,7 +106,7 @@ Arch coverage confirmed at runtime: x86_64 wheel ships `sm_70…sm_120` (RTX 406
 - [x] Installed the pinned stack from the cu128 index; **GPU smoke test passes** (`tools/checks/torch_smoke.py`: matmul, conv2d, bf16, autocast, nms, batched_nms, roi_align, deform_conv2d, NCCL — all OK on sm_90).
 - [x] Bootstrap script committed: `tools/isambard/setup_env.sh`.
 - [x] Repo synced via git: branch `pure-pytorch-rewrite` checked out at `~/code/vfe.pytorch`, `.venv` alongside it.
-- [ ] **Run `uv pip install --python .venv/bin/python -e ".[log,dev]"` there** — the deps are installed but the `vfe` package itself is not yet editable-installed, so scripts currently rely on `sys.path`/`PYTHONPATH`.
+- [x] **Run `uv pip install --python .venv/bin/python -e ".[log,dev]"` there** — the deps are installed but the `vfe` package itself is not yet editable-installed, so scripts currently rely on `sys.path`/`PYTHONPATH`. *Done in Phase 8.*
 - [x] Data staging path decided: `/projects/b5cs/imagenet_vid/` (the project's shared-dataset area, rather than `$SCRATCH`); see *Data*.
 - [ ] (Later, multi-GPU/node) `module load brics/nccl brics/aws-ofi-nccl`; launch with `srun --mpi=pmi2 --ntasks-per-node=<gpus>`, NCCL backend, `MASTER_ADDR=$(scontrol show hostname $SLURM_NODELIST | head -n1)` — see `isambard:nccl` + `isambard:slurm`.
 - [ ] *(Fallback only)* If Hopper-tuned kernels are ever needed: `apptainer build vfe.sif docker://nvcr.io/nvidia/pytorch:<arm64 tag>` (or `podman-hpc pull` + `podman-hpc migrate`), run with `--nv`/`--gpu`.
@@ -207,7 +212,7 @@ conda run -n vfe-torch --no-capture-output python tools/checks/parity_ops.py --c
 - [x] Port FPN neck + `ChannelMapper` — `vfe/models/necks/`.
 - [x] Checkpoint loading — `vfe/models/checkpoint.py`: `load_checkpoint`/`load_state_dict`, `torchvision://` URI resolution (verified byte-identical URLs vs old mmcv), `swin_convert` for the released Swin weights. Partial loads are *logged*, never silent.
 - [x] Parity: `tools/checks/parity_backbone.py`, 9 cases. **All pass on CPU and CUDA.** The 6 ResNet/FPN cases are bit-exact (`--atol 0 --rtol 0`) on CPU and within 1e-6 on CUDA; Swin differs by ≤1.8e-6 absolute on ~1.0 scale; FPN on CUDA ~2.6e-6 relative.
-- [ ] **Deferred:** `STPNSwinTransformer` (prompted Swin, `mmdet/models/backbones/sptn_swin.py`, ~1019 lines) — only STPN needs it, and MAMBA (ResNet-101-DC5 + ChannelMapper, already verified) is the first reproduction target. Port before Phase 7's STPN run.
+- [x] **Deferred:** `STPNSwinTransformer` (prompted Swin, `mmdet/models/backbones/sptn_swin.py`, ~1019 lines) — only STPN needs it, and MAMBA (ResNet-101-DC5 + ChannelMapper, already verified) is the first reproduction target. Port before Phase 7's STPN run. *Ported in Phase 7, 2026-09-17 (`vfe/models/backbones/swin.py`).*
 
 Two things the harness caught that are worth remembering:
 - **`act_cfg=None` means "no activation", not "default to ReLU".** mmcv puts `dict(type='ReLU')` in the *signature*, so an explicit `None` is meaningful — FPN's lateral and output convs rely on it. `ConvModule` had been coercing `None` → ReLU, producing completely wrong FPN outputs. Fixed with a `DEFAULT_ACT_CFG` sentinel in `vfe/layers/conv_module.py`.
@@ -227,7 +232,7 @@ MAMBA first: it is the primary reproduction target and its backbone/neck are alr
 - [x] **4f** MAMBA — `vfe/models/{memory,aggregators}.py`, `vfe/models/roi_heads/mamba.py` (`MambaBBoxHead`, `MambaRoIHead`), `vfe/models/vid/` (`BaseVideoDetector`, `MAMBA`). Parity: `tools/checks/parity_mamba.py`, **~650 artifacts, passes on CPU and CUDA**: memory bank bit-exact through every branch, including random sample/replace; aggregator forward and CPU gradients; `init_weights()` on the real config (the aggregators keep torch's default `nn.Linear` init because mmcv's init recursion never reaches them, and the check pins that); `forward_train` losses; and 4-frame `simple_test` videos in adaptive-stride, small-memory and fixed-stride modes, with memory state carried across calls.
   - Behaviour kept from the original but worth knowing: at test time the memory stores **pre-ReLU** features; fixed-stride mode writes the current frame into the window's centre slot *in place*, so it persists; memory reads/writes draw from the global **CPU** RNG. One deliberate change: sampling an empty memory raises a clear error instead of returning `[]` and failing obscurely inside the aggregator.
   - ~~Phase 5 must answer: does `shuffle_video_frames=True` break MAMBA's memory seeding?~~ **Answered in the audit:** the dataset shuffles every frame *except the first*, so each video still starts at `frame_id == 0`.
-- [ ] ~~STPN + DVP predictor.~~ → Phase 7 of the revised roadmap.
+- [x] ~~STPN + DVP predictor.~~ → Phase 7 of the revised roadmap. *Done there, 2026-09-17 (`vfe/models/vid/stpn.py`).*
 - [ ] ~~SELSA (baseline) if useful for cross-checking.~~ Dropped: not a reproduction target, and MAMBA is verified without it.
 
 Notes on what the parity harnesses measure, and where the noise floor sits:
@@ -312,7 +317,7 @@ Order changed from *data → training → reproduce* to **evaluation first**. A 
   - **`epoch_8.pth` scores 84.39** (job 6652688), 0.15 below epoch 9, per-class mean difference 0.60. The run is converged and stable at the end, so the 0.61 gap to the original is a difference *between runs*, not noise within ours. It is not proof of seed variance either: consecutive epochs are highly correlated, so 0.15 is a floor on variability rather than an estimate of seed-to-seed spread. Ours-vs-original per-class differences are 2.7× larger than epoch-8-vs-9 ones (mean 1.61 vs 0.60, max 6.9 vs 3.4). Settling it would need a second run with another seed (≈40 GPU-hours), not approved.
 
 ### Phase 8 — Consolidate
-- [x] **Decided 2026-09-18: the legacy `mmdet/` tree and the `vfe` conda env stay, as the permanent parity oracle.** No golden files: every harness in `tools/checks/` keeps running both stacks live, on this machine. Nothing is deleted, and the legacy install files (`setup_mmdet_legacy.py`, `requirements-mmdet-legacy.txt`) stay with it.
+- [x] **Decided 2026-09-18: the legacy `mmdet/` tree and the `vfe` conda env stay, as the permanent parity oracle.** No golden files: every harness in `tools/checks/` keeps running both stacks live, on this machine. Nothing is deleted, and the legacy install files (`setup_mmdet_legacy.py`, `requirements-mmdet-legacy.txt`) stay with it. **Reversed the same day:** see the [Epilogue](#epilogue-2026-09-20).
 - [x] Fast tests that need neither the legacy env nor the data: `tests/vfe/` (`python -m pytest tests/vfe`, 34 tests in ~3 s, CPU) covers the new infrastructure by invariants — `--cfg-options` parsing and list-index merges, sampler lengths and coverage, the virtual-rank layout and mmdet worker seeds, the LR schedule, clipping, independent and restorable random streams, checkpoint round trips and resume rescaling, exact gradient accumulation, STPN's crop/pad/resize/AutoAugment draws, both models' parameter counts, and prompted Swin reducing exactly to plain Swin without prompts.
 - [x] README section for the pure-PyTorch package (what it reproduces, install, evaluation and training commands, accumulation standing in for the original GPU count, the unit tests, and how to re-run a parity check); the original mmcv/mmdet instructions stay, relabelled as the reference stack. `uv.lock` committed (resolved with uv, universal across x86_64 and aarch64 on Python 3.12). Slurm job outputs are git-ignored.
 - [x] Isambard env: `vfe` installed editable with `uv pip` (the venv has no pip), so it imports outside the repo directory; the stale `stash@{0}` (an empty diff) dropped.
@@ -332,7 +337,7 @@ Order changed from *data → training → reproduce* to **evaluation first**. A 
 2. **MAMBA epochs 1–3:** no log exists. M3 assumes the published config (8×1 images, lr 1e-3, from scratch) and runs on Isambard.
 3. **Isambard budget:** approved: M1 ≈ 2 GPU-hours, M3 ≈ 20–30 GPU-hours, STPN similar.
 4. **Acceptance:** M1 within ±0.2 AP50; M3 within ±0.5.
-5. **Parity oracle (2026-09-18):** keep the legacy tree and env rather than freezing golden files; the saved legacy artifacts are ≈9.1 GB against a 13 MB repo, and shrinking them would weaken the checks. Parity stays re-runnable on this machine; `tests/vfe/` guards the new code everywhere else.
+5. **Parity oracle (2026-09-18):** keep the legacy tree and env rather than freezing golden files; the saved legacy artifacts are ≈9.1 GB against a 13 MB repo, and shrinking them would weaken the checks. Parity stays re-runnable on this machine; `tests/vfe/` guards the new code everywhere else. **Reversed the same day:** golden files were frozen after all, kept out of the repository, and the tree was removed; see the [Epilogue](#epilogue-2026-09-20).
 6. **MAMBA schedule (2026-09-18):** reproduce the *published model's* schedule (epochs 1–3 at batch 4), not the config read literally; both runs are kept and reported.
 
 ## Data
@@ -373,3 +378,22 @@ Order changed from *data → training → reproduce* to **evaluation first**. A 
 - **2026-09-16 (later)** — Phases 1–2 complete. `vfe/config.py` + `vfe/registry.py` written; config loader is **bit-exact vs `mmcv.Config`** on all 4 VID configs. `vfe/ops/` written; **bit-exact vs compiled `mmcv.ops`** across 15 cases on CPU *and* CUDA. Parity-harness pattern established for the remaining phases.
 - **2026-09-16** — Versions pinned (torch 2.10.0+cu128 / torchvision 0.25.0+cu128 / py3.12); `pyproject.toml` + `vfe/` package skeleton created; legacy `setup.py`/`requirements.txt` renamed aside. Local `vfe-torch` env built and GPU-verified on RTX 4060. Phase 1b done: uv installed on Isambard, repo cloned to `~/code/vfe.pytorch`, `.venv` built, `tools/checks/torch_smoke.py` passes on a GH200 (sm_90) — all `torchvision.ops` we need work on both arches. Caught and fixed the PyPI-aarch64-is-CPU-only trap.
 - **2026-09-15** — Phase 0 complete: Miniforge installed; `vfe` legacy env built & GPU-verified (MAMBA/STPN build; torch + mmcv ops run on RTX 4060 via PTX-JIT). mmlab dependency surface inventoried. Plan drafted.
+
+## Epilogue (2026-09-20)
+
+The log above stops on 2026-09-18. Between that and the release, as the commits record it:
+
+- **The oracle decision was reversed the same day** (Phase 8 and Decision 5 above). The legacy environment was about to become a separate checkout that would not outlive this machine, so its side of every check was frozen after all (`tools/checks/run_parity.py`, e82ab85). Each of the 27 variants records the sha256 of its harness and of every harness that one imports, of each config in its `_base_` closure, and of the artifact, and goes `STALE` if any of them moves. The artifacts stay in the git-ignored `.parity-golden/` on this machine, which still meets Decision 5's objection (≈9.1 GB against a 13 MB repo): only `tools/checks/golden-manifest.json` is tracked. The live oracle is now a `v1.0.0` worktree, which `tools/checks/_legacy.py` finds. How to run, rebuild and re-freeze: [parity.md](parity.md).
+- **The legacy tree left the repository** (ec3f0c9 and the four commits after it): `mmdet/`, MMDetection's documentation, demos and packaging, the legacy tools, every config outside the four trainable ones and their `_base_` closure, and the 96 unit-test files that tested mmdet. The five that test `vfe/` moved from `tests/vfe/` to `tests/`. Separately, on 2026-09-18, `vfe/apis/` was folded into `vfe/engine/` (`train.py` → `trainer.py`, `test.py` → `evaluator.py`; ab32f2d), so what this document calls `vfe/apis/` now lives there.
+- **One check had been passing on nothing.** `stpn_swins_adam_9x.py` was a 0-byte file that both config loaders read as `{}`, so `parity_config` compared two empty dicts. It now refuses a config without a model or data, and the file is a real Swin-S config, built identically by both stacks (66,324,528 parameters) and never trained (67ed35e).
+- **2.0.0 was released on 2026-09-20** (tag `v2.0.0` at 28c4afa; [release notes](release-notes-2.0.md)). `v1.0.0` and the `v1` branch keep the original. CI checks everything that needs neither the data, a GPU nor the goldens: lint, the unit tests, no mm\* module imported at runtime, every config building, the entry points, the sdist's contents, Python 3.8 syntax in `tools/checks/`, and `uv lock --check`.
+
+**STPN's phase** (Phase 7 of the revised roadmap) never got a section of its own. Its record is the *Since the audit* bullet at the top, M3′ under Phase 6, and the Progress log entries 2026-09-17 (STPN) and (M3′).
+
+**Still open:**
+- **M3′** is 0.11 outside its ±0.5 target. A second STPN seed (≈40 GPU-hours) would show whether the gap is run-to-run variance; it has not been run.
+- **The goldens exist on one machine.** If it is lost, they have to be re-frozen from a rebuilt `v1.0.0` environment ([parity.md](parity.md)): a few hours, and it needs the data, both checkpoints and a GPU.
+- **Three goldens name the commit before the one they were frozen from.** `train_loader`, `train_step_mamba` and `train_step_stpn` record `repo_commit` f55ed94 but were frozen from 28c4afa's `parity_train_step.py`, which was not yet committed and differs by one blank line. Their fingerprints match the harness that ran, so `verify` is unaffected.
+- **Never needed:** Phase 1b's multi-node launch and container fallback. One node with gradient accumulation matched the original eight-GPU runs.
+
+**Next:** EOVOD is Phase 9, tracked in [eovod-plan.md](eovod-plan.md). TDViT stays out of scope: [its repository](https://github.com/guanxiongsun/TDViT) holds only a README.
