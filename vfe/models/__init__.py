@@ -45,7 +45,7 @@ from .roi_heads import (
     SingleRoIExtractor,
     StandardRoIHead,
 )
-from .vid import MAMBA, STPN, BaseVideoDetector
+from .vid import EOVOD, MAMBA, STPN, BaseVideoDetector
 
 __all__ = [
     "MODELS",
@@ -97,6 +97,7 @@ __all__ = [
     "BaseVideoDetector",
     "MAMBA",
     "STPN",
+    "EOVOD",
     "CrossEntropyLoss",
     "FocalLoss",
     "IoULoss",
