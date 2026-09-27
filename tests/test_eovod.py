@@ -219,6 +219,7 @@ def test_eovod_without_a_prior_detects_plainly():
 @pytest.mark.parametrize("config, total, trainable", [
     # FCOS R-50-FPN is 32.18M in mmdet; the shared aggregator adds 263,168.
     ("configs/vid/eovod/eovod_fcos_r50_fpn_3x.py", 32_443_240, 32_167_720),
+    ("configs/vid/eovod/eovod_fcos_r101_fpn_3x.py", 51_435_368, 51_107_624),
     ("configs/vid/eovod/eovod_fcos_r101_fpn_9x.py", 51_435_368, 51_107_624),
 ])
 def test_eovod_configs_build(config, total, trainable):

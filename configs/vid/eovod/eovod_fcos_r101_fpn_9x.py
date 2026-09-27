@@ -1,6 +1,6 @@
-# EOVOD on FCOS / ResNet-101-FPN, 9 epochs: the paper's reported setting
-# (FCOS+LPN+SPN, ResNet-101). The schedule follows the released code's
-# 9x recipe; the paper itself states batch size 32.
+# EOVOD on FCOS / ResNet-101-FPN, 9 epochs: the recipe of the released
+# checkpoint (fcos_att_r101_fpn_9x in the released code: batch 8, x0.1 after
+# epoch 6). The paper's own FCOS recipe is the 3x config beside this one.
 _base_ = ['./eovod_fcos_r50_fpn_3x.py']
 
 model = dict(

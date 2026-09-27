@@ -65,14 +65,21 @@ SPN alone takes FCOS+LPN from 20.4 to 26.9 FPS and YOLOX+LPN from 35.8 to
 50.5, at 53.8 / 52.7 AP.
 
 **Training.** VID (15 frames per video) plus at most 2,000 DET images per
-class; SGD, batch size 32; ResNet-101 for FCOS and CenterNet, DarkNet-53 for
-YOLOX (640×640, with MixUp / Mosaic). The excerpts give no learning rate,
-epoch count or image scale for FCOS.
+class. FCOS: images resized to a shorter side of 600 (longer side at most
+1000); batch size 4; SGD with momentum 0.9 and weight decay 1e-4; 3 epochs,
+lr 1e-3 for the first two and 1e-4 for the last; ResNet-101. CenterNet:
+batch 32, lr 1e-4 for 50 epochs then 1e-5 for 30. YOLOX: DarkNet-53 at
+640×640 with MixUp / Mosaic, lr 1e-3 on a cosine schedule for 80 epochs.
+Inference uses **2 reference frames** — more ran a 32 GB V100 out of memory
+for the naive one-stage adaptation, so the comparison kept 2 throughout.
 
 **Results (ImageNet VID, COCO-style AP).** FCOS R-101: 49.8 → 54.1 AP with
 LPN (+4.3), 53.8 with LPN+SPN at 26.9 FPS on a V100; RDN, the best
-competitor, is 0.7 lower and ~3× slower. STPN's paper later quotes EOVOD at
-54.1 AP / 79.8 AP50. The released checkpoint scores 54.0 / 79.7 / 59.3.
+competitor, is 0.7 lower and ~3× slower. With *T* = 7 the size prior takes
+YOLOX from 25.1 to 40 FPS in one table and YOLOX-M+LPN from 35.8 to 50.5 in
+another. STPN's paper later quotes EOVOD at 54.1 AP / 79.8 AP50. The
+released checkpoint (a 9-epoch, batch-8 run per its config) scores
+54.0 / 79.7 / 59.3.
 
 **Not in the excerpts:** the attention formulation, the memory's size and
 update rule, how many keys a query sees, how the first frame is handled
@@ -126,12 +133,13 @@ Everything EOVOD-specific is `vfe/models/vid/eovod.py` (about 450 lines).
 7. **Only torch's generator is used**, on the feature device, so exact
    gradient accumulation (`RngStreams`) covers all of it. The released code
    drew from numpy, which the per-virtual-rank swap does not cover.
-8. **The recipe follows the released code** where the paper is silent: SGD lr
-   0.001, momentum 0.9, weight decay 1e-4, gradient clipping at 35, 500
-   warmup iterations from 1/3, one image per GPU × 8, 9 epochs with ×0.1
-   after the sixth; 1000×600 images; VID references 2 within ±9 frames plus
-   DET; test-time 14 references over the video for the first frame. The paper
-   says batch 32; see *Decisions needed*.
+8. **The recipe is the paper's FCOS recipe** — batch 4, SGD lr 1e-3 for two
+   epochs then 1e-4, 3 epochs, shorter side 600 — in the 3x configs, with
+   the released code's 500 warmup iterations from 1/3 and gradient clipping
+   at 35, VID references 2 within ±9 frames plus DET, and 14 references over
+   the video for a first frame's memory. The 9x R-101 config keeps the
+   released checkpoint's longer recipe (9 epochs at batch 8, ×0.1 after the
+   sixth) for comparison with it.
 9. **Both metrics are reported.** `evaluation = dict(vid_style=True,
    coco_style=True)` gives the VID AP50 with the motion breakdown (comparable
    to MAMBA and STPN) and COCO AP / AP50 / AP75 / small / medium / large
@@ -171,10 +179,11 @@ Everything EOVOD-specific is `vfe/models/vid/eovod.py` (about 450 lines).
 
 ## Running it
 
-Configs: `configs/vid/eovod/eovod_fcos_r50_fpn_3x.py` (quick) and
-`configs/vid/eovod/eovod_fcos_r101_fpn_9x.py` (the paper's setting). Test
-frames stay in order — do not set `shuffle_video_frames`: the location prior
-comes from the previous frame and the size prior counts frames.
+Configs: `configs/vid/eovod/eovod_fcos_r101_fpn_3x.py` (the paper's
+setting), `eovod_fcos_r101_fpn_9x.py` (the released checkpoint's recipe) and
+`eovod_fcos_r50_fpn_3x.py` (quick). Test frames stay in order — do not set
+`shuffle_video_frames`: the location prior comes from the previous frame and
+the size prior counts frames.
 
 ```bash
 python -m pytest                                    # 55 tests, CPU
@@ -183,22 +192,25 @@ python -m pytest                                    # 55 tests, CPU
 python -m vfe.cli.train configs/vid/eovod/eovod_fcos_r50_fpn_3x.py \
     --work-dir work_dirs/eovod_smoke --max-epochs 1 --max-iters-per-epoch 300 --no-validate
 
-# Isambard: four GH200s x 2 micro-steps = the recipe's batch of 8
+# Isambard: four GH200s x 1 micro-step = the paper's batch of 4
 torchrun --standalone --nproc_per_node=4 -m vfe.cli.train \
-    configs/vid/eovod/eovod_fcos_r101_fpn_9x.py --launcher pytorch \
-    --accumulate 2 --work-dir work_dirs/eovod_r101_9x --seed 0
+    configs/vid/eovod/eovod_fcos_r101_fpn_3x.py --launcher pytorch \
+    --accumulate 1 --work-dir work_dirs/eovod_r101_3x --seed 0
 
 torchrun --standalone --nproc_per_node=4 -m vfe.cli.test \
-    configs/vid/eovod/eovod_fcos_r101_fpn_9x.py work_dirs/eovod_r101_9x/epoch_9.pth \
-    --launcher pytorch --work-dir work_dirs/eovod_r101_9x
+    configs/vid/eovod/eovod_fcos_r101_fpn_3x.py work_dirs/eovod_r101_3x/epoch_3.pth \
+    --launcher pytorch --work-dir work_dirs/eovod_r101_3x
 ```
 
 What to look at first: the log's `loss_cls` / `loss_bbox` / `loss_centerness`
 falling from about 1.1 / 0.7 / 0.65 (a fresh FCOS on 30 classes) — the first
 `loss_cls` is dominated by the 1% prior init and should drop fast; peak
 memory per GPU (three 1000×600 frames through R-101-FPN plus the attention;
-expect well under 20 GB); and seconds per iteration, from which the 9-epoch
-cost follows (MAMBA's 6x took ≈17 GPU-hours at 0.158 s/iter).
+expect well under 20 GB); and seconds per iteration, from which the cost
+follows. At batch 4 an epoch is 27,422 iterations; MAMBA's batch-4 epochs
+ran at about 0.09 s each on four GH200s (three epochs in 1 h 58 min), and
+FCOS-FPN with three frames per sample should be in the same range, so the
+3-epoch run is likely 3–4 hours, ≈15 GPU-hours.
 
 Evaluation prints both metric sets. The paper's numbers to compare with are
 COCO AP 53.8 / AP50 ≈ 79.7 (FCOS+LPN+SPN, R-101); `size_prior=None` in the
@@ -222,10 +234,12 @@ not a check of this implementation, since the aggregator differs by design.
   --max-videos 2` on the resulting checkpoint (stateful inference on real
   videos), and `parity_fcos.py` against your `vfe` conda env; then freeze it
   into `run_parity.py`'s matrix.
-- [ ] **E-M2 — a short Isambard run** (500 iterations of the R-101 config,
-  batch 8): speed, peak memory, the LR schedule, the loss curve.
-- [ ] **E-M3 — the full R-101 9x run → COCO AP within ±0.5 of 53.8 and AP50
-  of 79.7**, plus the VID AP50 for the MAMBA/STPN table.
+- [ ] **E-M2 — a short Isambard run** (500 iterations of the R-101 3x config,
+  batch 4): speed, peak memory, the LR schedule, the loss curve.
+- [ ] **E-M3 — the full R-101 3x run → COCO AP within ±0.5 of 53.8 and AP50
+  of 79.7**, plus the VID AP50 for the MAMBA/STPN table. The 9x recipe is
+  the fallback if 3x lands low: it is what the released checkpoint trained
+  on, at three times the cost.
 - [ ] **Ablations the paper reports**, if the budget allows: `size_prior=None`
   (54.1 AP), *r* ∈ {0.6, 0.8, 1.0}, *T* ∈ {3, 7, 15}; and this
   implementation's own: `aggregator.shared=False`, memory sizes.
@@ -234,14 +248,14 @@ not a check of this implementation, since the aggregator differs by design.
 
 ## Decisions needed
 
-1. **Batch and learning rate.** The paper states batch 32; the released
-   config has batch 8 at lr 0.001, and produced the released 79.7. The configs
-   follow the released recipe. Train the paper's batch (four GH200s ×
-   `--accumulate 8`) at lr 0.004 instead?
-2. **Memory defaults** (4096 / 1024 / 512 per level): the paper gives none.
-   Keep, or run E-M2 at two sizes and pick by loss?
-3. **Isambard budget:** E-M2 ≈ 0.2 GPU-hours; E-M3 estimated from E-M2
-   (likely 10–20 GPU-hours); each ablation the same again.
+1. **Which recipe for E-M3.** The paper's 3 epochs at batch 4 (its 54.1 /
+   53.8 AP) or the released checkpoint's 9 epochs at batch 8 (its 54.0 AP)?
+   Configs exist for both; the 3x costs a third. The plan assumes 3x first.
+2. **Memory defaults** (4096 / 1024 / 512 per level): the paper gives none,
+   and says its inference saw 2 reference frames. Keep, or run E-M2 at two
+   sizes and pick by loss?
+3. **Isambard budget:** E-M2 ≈ 0.2 GPU-hours; E-M3 ≈ 15 GPU-hours if the
+   iteration time matches MAMBA's; each ablation the same again.
 4. **Acceptance:** ±0.5 COCO AP against the paper's 53.8, as for the other
    models' ±0.5 AP50?
 
@@ -306,6 +320,12 @@ python tools/checks/parity_fcos.py --compare fcos_mmdet.pt fcos_vfe.pt        # 
 
 ## Progress log
 
+- **2026-09-27 (recipe)** — Further excerpts gave the paper's FCOS recipe:
+  3 epochs at batch 4, lr 1e-3 → 1e-4 after two, shorter side 600, 2
+  reference frames at inference; the "batch 32" was CenterNet's. The R-101
+  3x config follows it and becomes the E-M3 target; the 9x config stays as
+  the released checkpoint's recipe. arXiv, ECVA, QUB (including the PhD
+  thesis, which likely holds the chapter in full) remain blocked here.
 - **2026-09-27 (implemented)** — EOVOD built from the paper: FCOS ported from
   mmdet 2.19.1 and checked exact against it in float64 (82 artifacts,
   1e-15) and to the float32 accumulation floor; `EOVOD` with the location

@@ -1,6 +1,6 @@
 # Configs
 
-Six trainable configs, plus the `_base_` files they inherit. The syntax is
+Seven trainable configs, plus the `_base_` files they inherit. The syntax is
 MMDetection's, and `vfe.config.Config` resolves it identically — that
 equivalence is itself one of the parity checks (`run_parity.py check config`).
 
@@ -10,7 +10,8 @@ equivalence is itself one of the parity checks (`run_parity.py check config`).
 | [`vid/mamba/mamba_r101_dc5_3x.py`](vid/mamba/mamba_r101_dc5_3x.py) | the same, 3 epochs | — |
 | [`vid/stpn/stpn_swint_adam_9x.py`](vid/stpn/stpn_swint_adam_9x.py) | STPN, Swin-T, 9 epochs | [`stpn_swint_adam_9x`](https://huggingface.co/guanxiongsun/vfe.pytorch/tree/main/work_dirs/stpn_swint_adam_9x) — AP50 85.2 |
 | [`vid/stpn/stpn_swins_adam_9x.py`](vid/stpn/stpn_swins_adam_9x.py) | STPN, Swin-S, 9 epochs | none — see below |
-| [`vid/eovod/eovod_fcos_r101_fpn_9x.py`](vid/eovod/eovod_fcos_r101_fpn_9x.py) | EOVOD on FCOS, ResNet-101-FPN, 9 epochs | none — untrained, see below |
+| [`vid/eovod/eovod_fcos_r101_fpn_3x.py`](vid/eovod/eovod_fcos_r101_fpn_3x.py) | EOVOD on FCOS, ResNet-101-FPN, the paper's recipe (3 epochs at batch 4) | none — untrained, see below |
+| [`vid/eovod/eovod_fcos_r101_fpn_9x.py`](vid/eovod/eovod_fcos_r101_fpn_9x.py) | the same, the released checkpoint's recipe (9 epochs at batch 8) | — |
 | [`vid/eovod/eovod_fcos_r50_fpn_3x.py`](vid/eovod/eovod_fcos_r50_fpn_3x.py) | the same on ResNet-50, 3 epochs | — |
 
 Both released checkpoints load into this code unchanged and reproduce their

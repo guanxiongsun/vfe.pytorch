@@ -1,5 +1,6 @@
-# EOVOD on FCOS / ResNet-50-FPN, 3 epochs: the quick recipe. The paper's
-# reported model is the ResNet-101 9x config next to this one.
+# EOVOD on FCOS / ResNet-50-FPN on the paper's FCOS recipe: 3 epochs at batch
+# 4, lr 1e-3 for two epochs then 1e-4, shorter side 600. The paper's reported
+# model is the ResNet-101 3x config next to this one.
 _base_ = [
     '../../_base_/models/vid/fcos_r50_fpn.py',
     '../../_base_/default_runtime.py',
@@ -97,7 +98,8 @@ data = dict(
     test=test_data,
 )
 
-# optimizer: the VID recipe (one image per GPU, eight GPUs)
+# optimizer: the paper's (one image per process; batch 4 = 4 processes x
+# --accumulate 1). The warmup and clipping come from the released code.
 optimizer = dict(type='SGD', lr=0.001, momentum=0.9, weight_decay=0.0001)
 optimizer_config = dict(_delete_=True, grad_clip=dict(max_norm=35, norm_type=2))
 # learning policy
