@@ -1,4 +1,4 @@
-"""EOVOD: the location and size priors, the pixel memory, the aggregator,
+"""EOVOD: the location and size priors, the key-pixel memory, the aggregator,
 and the detector's training and stateful inference on a tiny model."""
 
 from pathlib import Path
@@ -39,20 +39,28 @@ def test_boxes_to_level_masks_marks_cell_centres_inside_and_never_loses_a_box():
     assert empty.shape == (2, 4) and not empty.any()
 
 
-def test_pixel_memory_caps_writes_and_replaces_at_random():
+def test_pixel_memory_fixed_key_set_keeps_everything():
+    memory = PixelMemory(num_levels=2)  # the paper's default: no caps, no updates
+    assert memory.sample(0) is None and memory.update is False
+    memory.write(0, torch.arange(8.0).view(8, 1))
+    memory.write(0, torch.arange(5.0).view(5, 1))
+    assert memory.sizes() == [13, 0]
+    assert torch.equal(memory.sample(0), memory.banks[0])  # every key, in order
+    memory.write(1, torch.zeros(0, 1))  # nothing to write
+    assert memory.sample(1) is None
+    memory.reset()
+    assert memory.sizes() == [0, 0]
+
+
+def test_pixel_memory_bank_caps_writes_and_replaces_at_random():
     torch.manual_seed(0)
-    memory = PixelMemory(num_levels=2, capacity=10, num_keys=4, write_per_frame=6)
-    assert memory.sample(0) is None
+    memory = PixelMemory(num_levels=2, update=True, capacity=10, num_keys=4, write_per_frame=6)
     memory.write(0, torch.arange(8.0).view(8, 1))  # 8 pixels -> 6 kept
     assert memory.sizes() == [6, 0]
     memory.write(0, torch.full((6, 1), 100.0))  # full: 4 old survive, 6 new
     assert memory.sizes() == [10, 0]
     assert (memory.banks[0] == 100).sum().item() == 6
     assert memory.sample(0).shape == (4, 1)
-    memory.write(1, torch.zeros(0, 1))  # nothing to write
-    assert memory.sample(1) is None
-    memory.reset()
-    assert memory.sizes() == [0, 0]
     with pytest.raises(ValueError):
         PixelMemory(1, capacity=4, write_per_frame=8)
 
@@ -87,7 +95,8 @@ TINY_DETECTOR = dict(
 
 def tiny_eovod(**kwargs):
     torch.manual_seed(0)
-    return EOVOD(TINY_DETECTOR, aggregator=dict(num_heads=4, shared=True), **kwargs)
+    kwargs.setdefault("aggregator", dict(num_heads=4, shared=True))
+    return EOVOD(TINY_DETECTOR, **kwargs)
 
 
 def meta(frame_id, shape=(96, 128, 3)):
@@ -98,13 +107,16 @@ def meta(frame_id, shape=(96, 128, 3)):
 def test_eovod_rejects_unknown_options_and_two_stage_detectors():
     with pytest.raises(ValueError, match="location_prior"):
         tiny_eovod(location_prior=dict(threshold=0.5))
+    with pytest.raises(ValueError, match="size_prior"):
+        tiny_eovod(size_prior=dict(interval=-1))
     mamba_cfg = Config.fromfile(REPO_ROOT / "configs/vid/mamba/mamba_r101_dc5_3x.py").model
     with pytest.raises(TypeError):
         EOVOD(mamba_cfg["detector"])
 
 
 def test_eovod_trains_with_ground_truth_priors_and_reference_keys():
-    model = tiny_eovod(location_prior=dict(train_jitter=0.2))
+    model = tiny_eovod(location_prior=dict(train_jitter=0.2),
+                       aggregator=dict(num_heads=4, shared=False, query_chunk=7))
     model.train()
     img = torch.randn(1, 3, 96, 128)
     refs = torch.randn(1, 2, 3, 96, 128)
@@ -117,23 +129,73 @@ def test_eovod_trains_with_ground_truth_priors_and_reference_keys():
     total = sum(losses.values())
     assert torch.isfinite(total)
     total.backward()
-    agg = model.aggregators[0]
-    assert all(p.grad is not None and torch.isfinite(p.grad).all() for p in agg.parameters())
-    # Reference frames without boxes still exercise the aggregator (random keys).
+    assert len(model.aggregators) == 5  # one per level
+    for agg in model.aggregators:
+        assert all(p.grad is not None and torch.isfinite(p.grad).all() for p in agg.parameters())
+    # Support frames without boxes still exercise the aggregator (random keys).
     model.zero_grad()
     sum(model.forward_train(img, [meta(3)], gt, [torch.tensor([2, 7])], refs,
                             [[meta(1), meta(5)]], ref_gt_bboxes=[torch.zeros(0, 5)]).values()
         ).backward()
-    assert agg.fc.weight.grad is not None
+    assert model.aggregators[0].fc.weight.grad is not None
     with pytest.raises(ValueError):
         model.forward_train(torch.randn(2, 3, 96, 128), [meta(0)] * 2, gt * 2, None, refs, None)
 
 
-def test_eovod_stateful_inference_carries_priors_and_memory_across_frames():
-    # score_thr 0 validates every detection, so both priors and the memory
-    # engage even with random weights.
-    model = tiny_eovod(location_prior=dict(score_thr=0.0), size_prior=dict(interval=3),
-                       memory=dict(capacity=256, num_keys=64, write_per_frame=32),
+def test_query_chunking_does_not_change_the_result():
+    model = tiny_eovod().eval()
+    feats = [torch.randn(1, 32, 12, 16)]
+    masks = [torch.zeros(12, 16, dtype=torch.bool)]
+    masks[0][2:9, 3:14] = True
+    keys = [torch.randn(40, 32)]
+    with torch.no_grad():
+        model.query_chunk = None
+        whole = model._enhance(feats, masks, keys)[0]
+        model.query_chunk = 5
+        chunked = model._enhance(feats, masks, keys)[0]
+    assert torch.allclose(whole, chunked, atol=1e-6)
+    assert torch.equal(whole[0][:, ~masks[0]], feats[0][0][:, ~masks[0]])  # background untouched
+
+
+def test_size_prior_rule_follows_the_paper_with_the_superset_as_an_option():
+    det_bboxes = torch.tensor([[0.0, 0.0, 10.0, 10.0, 0.9], [0.0, 0.0, 50.0, 50.0, 0.7],
+                               [0.0, 0.0, 5.0, 5.0, 0.2]])
+    det_levels = torch.tensor([3, 1, 0])  # the low-scoring level-0 box is not validated
+    model = tiny_eovod(size_prior=dict(interval=7))
+    model._after_frame([], det_bboxes, det_levels, full=True)
+    assert model._active_levels == [1, 3] and model._frames_until_full == 7
+    assert model._levels_to_run() == ([1, 3], False) and model._frames_until_full == 6
+    assert torch.equal(model._prev_boxes, det_bboxes[:2, :4])
+
+    superset = tiny_eovod(size_prior=dict(interval=0, keep_higher_levels=True))
+    superset._after_frame([], det_bboxes, det_levels, full=True)
+    assert superset._active_levels == [1, 2, 3, 4]
+    assert superset._levels_to_run() == ([0, 1, 2, 3, 4], True)  # T = 0: every frame is full
+
+    nothing = tiny_eovod(size_prior=dict(interval=7))
+    nothing._after_frame([], det_bboxes[2:], det_levels[2:], full=True)
+    assert nothing._active_levels is None  # no validated box: keep every level
+
+
+def test_reference_keys_and_the_first_frame_prior():
+    refs = torch.randn(3, 3, 96, 128)
+    metas = [meta(0), meta(4), meta(8)]
+    paper = tiny_eovod(location_prior=dict(score_thr=0.0), ref_chunk_size=2).eval()
+    with torch.no_grad():
+        paper._gather_reference_keys(refs, metas)
+    assert all(size > 0 for size in paper.memory.sizes())
+    assert paper._prev_boxes is None  # the paper skips aggregation on the first frame
+
+    bootstrapped = tiny_eovod(location_prior=dict(score_thr=0.0, bootstrap_first_frame=True)).eval()
+    with torch.no_grad():
+        bootstrapped._gather_reference_keys(refs, metas)
+    assert bootstrapped._prev_boxes is not None and bootstrapped._prev_boxes.shape[1] == 4
+
+
+def test_eovod_stateful_inference_carries_priors_across_frames():
+    # score_thr 0 validates every detection, so both priors engage even with
+    # random weights.
+    model = tiny_eovod(location_prior=dict(score_thr=0.0), size_prior=dict(interval=2),
                        ref_chunk_size=2).eval()
     refs = torch.randn(1, 3, 3, 96, 128)  # the test pipeline's [Tensor(1, R, C, H, W)]
     ref_metas = [[[meta(0), meta(4), meta(8)]]]
@@ -142,12 +204,11 @@ def test_eovod_stateful_inference_carries_priors_and_memory_across_frames():
                                  ref_img_metas=ref_metas, rescale=True)
     assert len(out0) == 1 and len(out0[0]) == 30
     assert all(arr.shape[1] == 5 for arr in out0[0])
-    sizes_after_seed = model.memory.sizes()
-    assert sum(sizes_after_seed) > 0
+    key_sizes = model.memory.sizes()
+    assert sum(key_sizes) > 0
     assert model._prev_boxes is not None and model._prev_boxes.shape[1] == 4
-    # Frame 0 was a full frame: the size prior chose a suffix of the levels.
-    assert model._active_levels is not None
-    assert model._active_levels == list(range(model._active_levels[0], 5))
+    # Frame 0 was a full frame: the size prior recorded the validated levels.
+    assert model._active_levels == sorted(set(model._active_levels))
     assert model._frames_until_full == 2
 
     seen_levels = []
@@ -163,16 +224,28 @@ def test_eovod_stateful_inference_carries_priors_and_memory_across_frames():
         for frame_id in (1, 2, 3):
             out = model.simple_test(torch.randn(1, 3, 96, 128), [meta(frame_id)], rescale=True)
             assert len(out[0]) == 30
-    # Frames 1 and 2 ran the restricted levels; frame 3 was full again.
-    assert seen_levels[0] == seen_levels[1] and seen_levels[2] == list(range(5))
-    assert model.memory.sizes() >= sizes_after_seed
+    # T = 2: frames 1 and 2 ran the restricted levels; frame 3 was full again.
+    assert seen_levels[0] == seen_levels[1] and len(seen_levels[0]) <= 5
+    assert seen_levels[2] == list(range(5))
+    assert model.memory.sizes() == key_sizes  # the paper's key set is fixed for the video
 
     # A new video resets everything.
     with torch.no_grad():
         model.simple_test(torch.randn(1, 3, 96, 128), [meta(0)], rescale=True)
-    assert model._frames_until_full in (0, 2)  # full frame, then possibly re-armed
+    assert model.memory.sizes() == [0] * 5  # no reference frames given this time
     with pytest.raises(KeyError):
         model.simple_test(torch.randn(1, 3, 96, 128), [dict(meta(0), frame_id=-1)])
+
+
+def test_eovod_memory_can_update_from_every_frame():
+    model = tiny_eovod(location_prior=dict(score_thr=0.0), size_prior=None,
+                       memory=dict(update=True, capacity=64, num_keys=16, write_per_frame=8)).eval()
+    with torch.no_grad():
+        model.simple_test(torch.randn(1, 3, 96, 128), [meta(0)])
+        after_first = model.memory.sizes()
+        model.simple_test(torch.randn(1, 3, 96, 128), [meta(1)])
+    assert sum(after_first) > 0 and model.memory.sizes() >= after_first
+    assert all(size <= 64 for size in model.memory.sizes())
 
 
 def test_eovod_runs_through_the_trainer_with_accumulation():
@@ -180,7 +253,7 @@ def test_eovod_runs_through_the_trainer_with_accumulation():
     the model's loss dict, the random keys and the jitter all fit the loop."""
     from vfe.engine.trainer import RngStreams, train_step
 
-    model = tiny_eovod()
+    model = tiny_eovod(location_prior=dict(train_jitter=0.1))
     model.train()
     optimizer = torch.optim.SGD([p for p in model.parameters() if p.requires_grad], lr=1e-3)
 
@@ -228,3 +301,5 @@ def test_eovod_configs_build(config, total, trainable):
     assert sum(p.numel() for p in model.parameters()) == total
     assert sum(p.numel() for p in model.parameters() if p.requires_grad) == trainable
     assert model.size_prior_interval == 7 and model.box_ratio == 0.8
+    assert model.memory.update is False and model.memory.num_keys is None
+    assert model.train_jitter == 0.0 and model.bootstrap_first_frame is False

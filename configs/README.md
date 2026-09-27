@@ -21,8 +21,10 @@ published scores to within 0.02 AP50.
 here yet; [`docs/eovod-plan.md`](../docs/eovod-plan.md) has the design, what
 is verified, and the run plan. Its test set keeps frames in order (no
 `shuffle_video_frames`): the location prior reads the previous frame, and the
-size prior counts frames. It evaluates with both the VID metric and COCO-style
-AP, which is what the paper reports.
+size prior counts frames. The size prior is inference-only, so one trained
+model gives both of the paper's rows: as configured (`size_prior.interval=7`)
+and LPN-only (`--cfg-options model.size_prior=None`). It evaluates with both
+the VID metric and COCO-style AP, which is what the paper reports.
 
 ## Two things the configs do not say
 

@@ -120,7 +120,7 @@ Slurm scripts for Isambard-AI are in [tools/isambard/](tools/isambard/).
 ## Tests and parity
 
 ```bash
-python -m pytest                       # 55 fast CPU tests, no data needed
+python -m pytest                       # 61 fast CPU tests, no data needed
 python tools/checks/run_parity.py check --all
 ```
 

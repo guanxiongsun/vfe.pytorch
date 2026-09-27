@@ -3,9 +3,10 @@
 ## Unreleased
 
 - EOVOD (`vfe/models/vid/eovod.py`), implemented from its paper on a ported
-  FCOS: a location prior and a size prior from the previous frame's
-  detections, per-level pixel memory and SELSA-style attention over the FPN
-  outputs. Configs under `configs/vid/eovod/`; untrained so far.
+  FCOS: a location prior and a size prior from the previous frame's validated
+  detections, and SELSA-style attention of the foreground pixels over the
+  pixels inside the reference frames' detections. Configs under
+  `configs/vid/eovod/` on the paper's recipe; untrained so far.
 - The one-stage machinery it needs: `FCOS`, `FCOSHead`,
   `MlvlPointGenerator`, `DistancePointBBoxCoder`, `FocalLoss`, `IoULoss`,
   `Scale`, and `open-mmlab://detectron/resnet{50,101}_caffe` checkpoint URIs.

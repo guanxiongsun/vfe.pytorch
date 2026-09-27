@@ -11,15 +11,19 @@ is_video_model = True
 
 model = dict(
     type='EOVOD',
-    # A detection above score_thr is *validated*: it feeds both priors and
-    # the memory. box_ratio shrinks the prior boxes (0.8 per the paper);
-    # train_jitter perturbs the ground truth that stands in for them.
-    location_prior=dict(score_thr=0.5, box_ratio=0.8, train_jitter=0.1),
-    # Full detection on every 7th frame; in between only the levels from the
-    # lowest one that produced a validated box upward. None disables it.
+    # A detection scoring above score_thr is *validated* (the paper's 0.5): it
+    # feeds both priors and the key set. box_ratio is the paper's adjustment
+    # ratio r on the prior boxes.
+    location_prior=dict(score_thr=0.5, box_ratio=0.8),
+    # The paper's T: after a full detection, 7 frames run only the levels the
+    # validated boxes came from, so a full detection happens every 8th frame.
+    # interval=0 or None gives the LPN-only model (Table 3 / T=0 in Table 6).
     size_prior=dict(interval=7),
-    memory=dict(capacity=4096, num_keys=1024, write_per_frame=512),
-    aggregator=dict(num_heads=16, shared=True),
+    # The paper's key set: pixels inside the reference frames' detections,
+    # fixed for the video. update=True adds every frame's, MAMBA-style;
+    # num_keys caps the keys read per frame (e.g. 4096 on an 8 GB GPU).
+    memory=dict(update=False),
+    aggregator=dict(num_heads=16, shared=True, query_chunk=1024),
     ref_chunk_size=4,
 )
 
