@@ -262,6 +262,9 @@ def train_detector(model: nn.Module, dataset, cfg, *, work_dir: str, timestamp: 
     elif load_from:
         load_checkpoint(model, load_from, map_location="cpu", log=logger.warning)
         logger.info("loaded weights from %s", load_from)
+        for hook in hooks:
+            if hasattr(hook, "sync_average"):
+                hook.sync_average()  # the EMA starts from the loaded weights
 
     eval_cfg = dict(cfg.get("evaluation") or {})
     eval_interval = eval_cfg.get("interval", 1)

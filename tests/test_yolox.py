@@ -289,14 +289,11 @@ def test_converter_maps_megvii_names():
 
 # ---- the recipe through the trainer --------------------------------------------------------
 
-def test_the_yolox_recipe_runs_through_the_trainer(tmp_path):
-    """Two epochs of three steps on synthetic images: the mixed-image
-    pipeline, batches of two, the YOLOX schedule, the mode switch at the last
-    epoch, the norm sync and the EMA, and a checkpoint holding the average."""
+def _tiny_recipe():
+    """The 10-epoch YOLOX config on the tiny model and synthetic images."""
     from parity_yolox_pipeline import SyntheticDataset
 
     from vfe.datasets import MultiImageMixDataset
-    from vfe.engine.trainer import train_detector
 
     cfg = Config.fromfile(REPO_ROOT / "configs/vid/eovod/eovod_yolox_m_10e.py")
     # Square, as the real 640 x 640: the letterbox then always fills one side,
@@ -315,7 +312,16 @@ def test_the_yolox_recipe_runs_through_the_trainer(tmp_path):
             t["img_scale"] = (160, 160)
         if t["type"] == "RandomAffine":
             t["border"] = (-80, -80)
-    dataset = MultiImageMixDataset(SyntheticDataset(), pipeline)
+    return cfg, MultiImageMixDataset(SyntheticDataset(), pipeline)
+
+
+def test_the_yolox_recipe_runs_through_the_trainer(tmp_path):
+    """Two epochs of three steps on synthetic images: the mixed-image
+    pipeline, batches of two, the YOLOX schedule, the mode switch at the last
+    epoch, the norm sync and the EMA, and a checkpoint holding the average."""
+    from vfe.engine.trainer import train_detector
+
+    cfg, dataset = _tiny_recipe()
     model = build_model(cfg.model)
     model.init_weights()
     torch.manual_seed(0)
@@ -359,3 +365,26 @@ def test_yolox_configs_build(config):
     # of 192 channels.
     assert sum(p.numel() for p in model.parameters()) == 25_445_769
     assert model.freeze_norm == (config == "eovod_yolox_m_lpn_3e.py")
+
+
+def test_training_from_loaded_weights_starts_the_average_there(tmp_path):
+    """With load_from, the EMA must start from the loaded weights: an average
+    left at the initial weights is swapped into the model at the first
+    epoch's start. With a zero learning rate the weights must not move."""
+    from vfe.engine.trainer import train_detector
+
+    cfg, dataset = _tiny_recipe()
+    cfg.optimizer.lr = 0.0
+    torch.manual_seed(123)
+    loaded = build_model(cfg.model)
+    loaded.init_weights()
+    torch.save({"state_dict": loaded.state_dict()}, tmp_path / "init.pth")
+    model = build_model(cfg.model)
+    model.init_weights()  # different weights (another seed)
+    name = "detector.backbone.stage1.0.conv.weight"
+    assert not torch.equal(model.state_dict()[name], loaded.state_dict()[name])
+    train_detector(model, dataset, cfg, work_dir=str(tmp_path), timestamp="t", meta={},
+                   logger=logging.getLogger("test"), device=torch.device("cpu"), seed=0,
+                   distributed=False, validate=False, max_epochs=1, max_iters_per_epoch=1,
+                   load_from=str(tmp_path / "init.pth"))
+    assert torch.allclose(model.state_dict()[name], loaded.state_dict()[name], atol=1e-6)

@@ -61,6 +61,14 @@ class ExpMomentumEMAHook:
             model.register_buffer(buffer_name, value.data.clone())
         self.model_buffers = dict(model.named_buffers())
 
+    def sync_average(self) -> None:
+        """Restart the average from the model's current weights. The trainer
+        calls it after ``load_from``: mmdet registers the buffers after
+        loading, and an average left at the initial weights would replace the
+        loaded ones at the first epoch's swap."""
+        for name, value in self.model_parameters.items():
+            self.model_buffers[self.param_ema_buffer[name]].data.copy_(value.data)
+
     def momentum_at(self, global_iter: int) -> float:
         return ((1 - self.momentum) * math.exp(-(1 + global_iter) / self.total_iter)
                 + self.momentum)

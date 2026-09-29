@@ -117,6 +117,15 @@ CONFIG=configs/vid/eovod/eovod_yolox_m_10e.py NAME=eovod_yolox_m_10e ACCUMULATE=
 
 ## Progress log
 
+- **2026-09-29 (the smoke run, and an EMA bug)** — The 1-GPU smoke (6955928)
+  passed the tests on the GH200 (including CUDA graphs of YOLOX's head),
+  trained 60 steps on real data, and ran 3 videos plain (58 frames/s) and
+  with both priors (62 frames/s). It also exposed a bug: the trainer
+  registered the EMA's buffers before applying `load_from`, so the first
+  epoch's swap put the initial weights in place of the COCO ones (649
+  detections on 1,392 frames at a 0.001 threshold). Fixed before stage A
+  started: the average now restarts from the loaded weights, as in mmdet,
+  with a test that fails without the fix.
 - **2026-09-29 (Y1-Y3)** — The port, its parity checks and the weights, as
   above. Isambard: a separate worktree `~/code/vfe-yolox`; the converted
   weights at `/projects/b5cs/vfe/checkpoints/coco/yolox_m_coco_eovod.pth`
