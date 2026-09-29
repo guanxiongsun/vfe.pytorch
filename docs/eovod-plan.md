@@ -395,6 +395,26 @@ python tools/checks/parity_fcos.py --compare fcos_mmdet.pt fcos_vfe.pt        # 
 
 ## Progress log
 
+- **2026-09-29 (the released code's aggregation, at one epoch)** — The
+  variant `eovod_fcos_r101_fpn_3x_backbone.py` (C4 and C5 aggregated before
+  the FPN, every pixel a query, 2,000 random training keys per support
+  frame, a memory bank at test time: the released R-101 model), trained one
+  epoch on the same schedule and seed as v4. Full val:
+
+  | 1 epoch | AP | AP50 | AP75 | APs / APm / APl | VID AP50 (fast) |
+  | :-- | --: | --: | --: | :-- | --: |
+  | v4 (paper's text), plain | 34.3 | 59.8 | 36.3 | 5.4 / 15.3 / 39.4 | 60.1 (36.6) |
+  | v4 (paper's text), LPN | **36.0** | 63.2 | **37.8** | 5.4 / 15.1 / 41.7 | 63.6 (40.2) |
+  | released-style | 35.6 | **66.5** | 34.3 | 6.3 / 19.9 / 39.9 | **66.9** (41.7) |
+  | released-style + SPN (margin 1) | 35.5 | 66.2 | 34.2 | 6.5 / 19.7 / 39.9 | 66.6 (41.2) |
+  | released-style, no memory | 22.1 | 44.4 | 19.3 | | 44.6 (26.0) |
+
+  Same AP, different trade: aggregating every pixel before the FPN gains
+  3.3 AP50 (and small / medium objects) and loses 3.5 AP75, the same box
+  degradation as v2's aggregating both towers — before the FPN, the
+  regression tower reads aggregated maps too. It never trains without
+  aggregation, so it cannot detect without its memory (22.1 AP).
+
 - **2026-09-29 (larger prior boxes on the 9-epoch model)** — Inference
   only. On the 10-video subset (LPN, key cap) AP rose monotonically with the
   box ratio r and with a lower validation threshold: r 0.8 / 1.0 / 1.2 /
