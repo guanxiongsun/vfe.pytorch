@@ -21,6 +21,7 @@
 #SBATCH --job-name=vfe_train
 #SBATCH --account=brics.b5cs
 #SBATCH --output=vfe_train_%j.out
+#SBATCH --nodes=1               # all GPUs on one node: torchrun --standalone
 #SBATCH --gpus=4
 #SBATCH --time=12:00:00
 set -euo pipefail
