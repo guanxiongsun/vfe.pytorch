@@ -242,7 +242,13 @@ class EOVOD(BaseVideoDetector):
             at all), ``train_drop_prob`` (each ground-truth box left out of
             the mask), ``train_jitter`` (random shift and rescale of the
             boxes, as a fraction of box size) and ``train_distractors`` (up
-            to this many random boxes added to the mask).
+            to this many random boxes added to the mask). ``queries``:
+            ``'prior'`` (the cells inside the prior) or ``'all'`` (every cell
+            of an aggregated level, as the released code has it; the training
+            prior then goes unused). ``train_keys``: ``'gt'`` (pixels inside
+            the support frames' ground-truth boxes) or ``'random'`` (up to
+            ``train_random_keys`` random pixels per support frame, as the
+            released code has it).
         size_prior: ``interval`` -- the paper's T: after a full detection,
             this many frames run only the levels the validated boxes came
             from; 0 is a full detection on every frame. ``margin`` also runs
@@ -260,7 +266,11 @@ class EOVOD(BaseVideoDetector):
             many queries at a time (no effect on the result); ``branches``:
             ``'all'`` feeds the aggregated maps to the whole head, ``'cls'``
             only to its classification tower, the regression tower reading
-            the original features.
+            the original features. ``position``: ``'fpn'`` aggregates the
+            FPN's outputs; ``'backbone'`` the backbone's, before the FPN (the
+            released code's model), with one aggregator per level at the
+            backbone's widths and strides ``backbone_strides``. ``levels``:
+            the levels aggregated (default: all).
         ref_chunk_size: reference frames detected at once when gathering the
             key set at a video's first frame (bounds peak memory).
         frozen_modules / train_cfg / test_cfg: as for MAMBA.
@@ -289,8 +299,18 @@ class EOVOD(BaseVideoDetector):
             "location_prior", location_prior,
             dict(score_thr=0.5, validate_on="score", box_ratio=0.8, train_jitter=0.0,
                  train_plain_prob=0.0, train_drop_prob=0.0, train_distractors=0,
-                 bootstrap_first_frame=False),
+                 bootstrap_first_frame=False, queries="prior", train_keys="gt",
+                 train_random_keys=2000),
         )
+        if location_prior["queries"] not in ("prior", "all"):
+            raise ValueError("location_prior.queries must be 'prior' or 'all'")
+        if location_prior["train_keys"] not in ("gt", "random"):
+            raise ValueError("location_prior.train_keys must be 'gt' or 'random'")
+        # 'all': every cell of an aggregated level is a query (the released
+        # code's model); 'prior': the cells inside the location prior.
+        self.queries_all = location_prior["queries"] == "all"
+        self.train_random_keys = (int(location_prior["train_random_keys"])
+                                  if location_prior["train_keys"] == "random" else None)
         self.score_thr = float(location_prior["score_thr"])
         self.validate_on = location_prior["validate_on"]
         if self.validate_on not in ("score", "cls_score"):
@@ -330,26 +350,57 @@ class EOVOD(BaseVideoDetector):
             if self.level_margin < 0 or self.margin_up < 0:
                 raise ValueError("size_prior.margin and margin_up must be at least 0")
 
+        aggregator = _with_defaults(
+            "aggregator", aggregator,
+            dict(num_heads=16, shared=True, query_chunk=1024, branches="all", position="fpn",
+                 levels=None, backbone_strides=(4, 8, 16, 32)),
+        )
+        if aggregator["branches"] not in ("all", "cls"):
+            raise ValueError("aggregator.branches must be 'all' or 'cls'")
+        if aggregator["position"] not in ("fpn", "backbone"):
+            raise ValueError("aggregator.position must be 'fpn' or 'backbone'")
+        # 'cls': the regression tower reads the original features, so only
+        # classification (and the centerness it carries) sees the aggregation.
+        self.aggregate_reg = aggregator["branches"] == "all"
+        # 'backbone': aggregate the backbone's maps before the FPN, as the
+        # released code does; the FPN and both head towers then read them.
+        self.aggregate_backbone = aggregator["position"] == "backbone"
+        if self.aggregate_backbone:
+            if not self.aggregate_reg:
+                raise ValueError("aggregator.branches='cls' needs position='fpn': before the "
+                                 "FPN, both towers read the aggregated maps")
+            if not getattr(self.detector, "with_neck", False):
+                raise ValueError("aggregator.position='backbone' needs a neck")
+            channels = list(self.detector.neck.in_channels)
+            self.agg_strides = [int(s) for s in aggregator["backbone_strides"]]
+            if len(self.agg_strides) != len(channels):
+                raise ValueError("aggregator.backbone_strides must give one stride per "
+                                 "backbone output")
+        else:
+            channels = [head.in_channels] * len(self.strides)
+            self.agg_strides = list(self.strides)
+        levels = aggregator["levels"]
+        self.agg_levels = set(range(len(self.agg_strides)) if levels is None
+                              else (int(lvl) for lvl in levels))
+        if not self.agg_levels or not self.agg_levels <= set(range(len(self.agg_strides))):
+            raise ValueError(f"aggregator.levels must be a non-empty subset of "
+                             f"0..{len(self.agg_strides) - 1}")
+        if aggregator["shared"] and not self.aggregate_backbone and levels is None:
+            self.aggregators = nn.ModuleList([PixelAggregator(head.in_channels,
+                                                              aggregator["num_heads"])])
+        else:
+            # One per level (the backbone's levels differ in width); levels
+            # not aggregated hold a parameter-free placeholder.
+            self.aggregators = nn.ModuleList(
+                PixelAggregator(c, aggregator["num_heads"]) if lvl in self.agg_levels
+                else nn.Identity() for lvl, c in enumerate(channels)
+            )
+
         memory = _with_defaults(
             "memory", memory,
             dict(update=False, capacity=None, num_keys=None, write_per_frame=None),
         )
-        self.memory = PixelMemory(len(self.strides), **memory)
-
-        aggregator = _with_defaults(
-            "aggregator", aggregator,
-            dict(num_heads=16, shared=True, query_chunk=1024, branches="all"),
-        )
-        if aggregator["branches"] not in ("all", "cls"):
-            raise ValueError("aggregator.branches must be 'all' or 'cls'")
-        # 'cls': the regression tower reads the original features, so only
-        # classification (and the centerness it carries) sees the aggregation.
-        self.aggregate_reg = aggregator["branches"] == "all"
-        num_aggregators = 1 if aggregator["shared"] else len(self.strides)
-        self.aggregators = nn.ModuleList(
-            PixelAggregator(head.in_channels, aggregator["num_heads"])
-            for _ in range(num_aggregators)
-        )
+        self.memory = PixelMemory(len(self.agg_strides), **memory)
         self.query_chunk = aggregator["query_chunk"]
         self.ref_chunk_size = ref_chunk_size
         self.train_cfg = train_cfg
@@ -377,9 +428,31 @@ class EOVOD(BaseVideoDetector):
     # ---- shared machinery ----------------------------------------------------
 
     def _pixels_in_boxes(self, feat: torch.Tensor, boxes: torch.Tensor, level: int) -> torch.Tensor:
-        """``feat`` ``(C, H, W)`` of one level -> ``(N, C)`` pixels inside ``boxes``."""
-        mask = boxes_to_level_masks(boxes, [feat.shape[-2:]], [self.strides[level]])[0]
+        """``feat`` ``(C, H, W)`` of one aggregation level -> ``(N, C)`` pixels
+        inside ``boxes``."""
+        mask = boxes_to_level_masks(boxes, [feat.shape[-2:]], [self.agg_strides[level]])[0]
         return feat[:, mask].t()
+
+    def _stage_one(self, img: torch.Tensor):
+        """The maps the aggregation acts on: the backbone's, or the FPN's."""
+        if self.aggregate_backbone:
+            return self.detector.backbone(img)
+        return self.detector.extract_feat(img)
+
+    def _stage_two(self, feats):
+        """The maps the head reads, from the stage-one maps."""
+        return self.detector.neck(feats) if self.aggregate_backbone else feats
+
+    def _query_masks(self, feats, boxes: torch.Tensor | None):
+        """Per aggregation level, the query cells: every cell with
+        ``queries='all'``, else those inside ``boxes`` (None: no prior)."""
+        if self.queries_all:
+            return [torch.ones(f.shape[-2:], dtype=torch.bool, device=f.device)
+                    if lvl in self.agg_levels else None for lvl, f in enumerate(feats)]
+        if boxes is None or not len(boxes):
+            return None
+        masks = boxes_to_level_masks(boxes, [f.shape[-2:] for f in feats], self.agg_strides)
+        return [m if lvl in self.agg_levels else None for lvl, m in enumerate(masks)]
 
     def _enhance(self, feats, masks, keys) -> list[torch.Tensor]:
         """Eq. 2: attend the masked cells of each ``(1, C, H, W)`` level over
@@ -448,7 +521,7 @@ class EOVOD(BaseVideoDetector):
         over the support frames' ground-truth pixels, and the levels as they
         were."""
         refs = ref_img[0]
-        feats = self.detector.extract_feat(torch.cat((img, refs), dim=0))
+        feats = self._stage_one(torch.cat((img, refs), dim=0))
         key_feats = [f[:1] for f in feats]
         ref_feats = [f[1:] for f in feats]
 
@@ -456,15 +529,27 @@ class EOVOD(BaseVideoDetector):
             ref_boxes = ref_gt_bboxes[0]
         else:
             ref_boxes = gt_bboxes[0].new_zeros((0, 5))
-        keys = [self._training_keys(ref_feats[lvl], ref_boxes, lvl) for lvl in range(self.num_levels)]
-        prior = self._training_prior(gt_bboxes[0], img_metas[0]["img_shape"])
-        masks = boxes_to_level_masks(prior, [f.shape[-2:] for f in key_feats], self.strides)
-        return self._enhance(key_feats, masks, keys), key_feats
+        keys = [self._training_keys(ref_feats[lvl], ref_boxes, lvl) if lvl in self.agg_levels
+                else None for lvl in range(len(feats))]
+        prior = None if self.queries_all else self._training_prior(
+            gt_bboxes[0], img_metas[0]["img_shape"])
+        masks = self._query_masks(key_feats, prior)
+        enhanced = self._stage_two(self._enhance(key_feats, masks, keys))
+        return enhanced, (None if self.aggregate_backbone else key_feats)
 
     def _training_keys(self, ref_feat: torch.Tensor, ref_boxes: torch.Tensor, level: int):
         """Pixels inside the support frames' ground-truth boxes at one level,
         ``(M, C)``; random pixels when no support frame has a box, so the
-        aggregator runs (and DDP finds its parameters used) on every step."""
+        aggregator runs (and DDP finds its parameters used) on every step.
+        With ``train_keys='random'`` (the released code), up to
+        ``train_random_keys`` random pixels of each support frame instead."""
+        if self.train_random_keys is not None:
+            c = ref_feat.shape[1]
+            keys = torch.cat([random_subset(f.reshape(c, -1).t(), self.train_random_keys)
+                              for f in ref_feat])
+            if self.memory.num_keys is not None:
+                keys = random_subset(keys, self.memory.num_keys)
+            return keys
         pixels = []
         for r in range(ref_feat.shape[0]):
             boxes = ref_boxes[ref_boxes[:, 0] == r, 1:]
@@ -523,20 +608,19 @@ class EOVOD(BaseVideoDetector):
                 # The test pipeline's nesting: [Tensor(1, R, C, H, W)] and [[[dict, ...]]].
                 self._gather_reference_keys(ref_img[0][0], ref_img_metas[0][0])
 
-        feats = self.detector.extract_feat(img)
+        feats = self._stage_one(img)
         levels, full = self._levels_to_run()
-        masks = None
-        if self._prev_boxes is not None and len(self._prev_boxes):
-            masks = boxes_to_level_masks(
-                scale_boxes(self._prev_boxes, self.box_ratio),
-                [f.shape[-2:] for f in feats], self.strides,
-            )
-        keys = [self.memory.sample(lvl) for lvl in range(self.num_levels)]
+        prior = (None if self._prev_boxes is None or not len(self._prev_boxes)
+                 else scale_boxes(self._prev_boxes, self.box_ratio))
+        masks = self._query_masks(feats, prior)
+        keys = [self.memory.sample(lvl) if lvl in self.agg_levels else None
+                for lvl in range(len(feats))]
         enhanced = self._enhance(feats, masks, keys)
+        head_feats = self._stage_two(enhanced)
 
         reg_feats = None if self.aggregate_reg else [feats[lvl] for lvl in levels]
         det_bboxes, det_labels, det_levels, det_cls_scores = self.detector.bbox_head.simple_test(
-            [enhanced[lvl] for lvl in levels], img_metas, rescale=False, level_ids=levels,
+            [head_feats[lvl] for lvl in levels], img_metas, rescale=False, level_ids=levels,
             with_levels=True, with_cls_scores=True, reg_feats=reg_feats,
         )[0]
         self._after_frame(enhanced, det_bboxes, det_levels, full,
@@ -598,7 +682,8 @@ class EOVOD(BaseVideoDetector):
         if boxes.numel() == 0:
             return
         for level, feat in enumerate(feats):
-            self.memory.write(level, self._pixels_in_boxes(feat[0], boxes, level))
+            if level in self.agg_levels:
+                self.memory.write(level, self._pixels_in_boxes(feat[0], boxes, level))
 
     def _gather_reference_keys(self, refs: torch.Tensor, ref_metas: list[dict]) -> None:
         """Plain detection on the reference frames ``(R, C, H, W)``: the pixels
@@ -610,13 +695,13 @@ class EOVOD(BaseVideoDetector):
         for chunk in refs.split(self.ref_chunk_size):
             metas = list(ref_metas[start:start + len(chunk)])
             start += len(chunk)
-            feats = self.detector.extract_feat(chunk)
-            results = head.simple_test(feats, metas, rescale=False, with_levels=True,
-                                       with_cls_scores=True)
+            stage_one = self._stage_one(chunk)
+            results = head.simple_test(self._stage_two(stage_one), metas, rescale=False,
+                                       with_levels=True, with_cls_scores=True)
             for i, (det_bboxes, _, _, det_cls_scores) in enumerate(results):
                 scores = self._validation_scores(det_bboxes, det_cls_scores)
                 boxes = det_bboxes[scores > self.score_thr, :4]
-                self._write_memory([f[i:i + 1] for f in feats], boxes)
+                self._write_memory([f[i:i + 1] for f in stage_one], boxes)
                 if (self.bootstrap_first_frame and metas[i].get("frame_id") == 0
                         and self._prev_boxes is None):
                     self._prev_boxes = boxes

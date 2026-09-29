@@ -342,6 +342,42 @@ def test_classification_only_aggregation_keeps_the_boxes_plain():
         tiny_eovod(aggregator=dict(branches="reg"))
 
 
+def test_backbone_aggregation_with_every_pixel_a_query():
+    """The released code's model: C4/C5 aggregated before the FPN, every cell
+    a query, random training keys, a memory bank written every frame."""
+    model = tiny_eovod(
+        location_prior=dict(score_thr=0.0, queries="all", train_keys="random",
+                            train_random_keys=16),
+        size_prior=None,
+        memory=dict(update=True, capacity=64, num_keys=16, write_per_frame=8),
+        aggregator=dict(num_heads=4, position="backbone", levels=[2, 3], shared=False))
+    assert [type(a).__name__ for a in model.aggregators] == [
+        "Identity", "Identity", "PixelAggregator", "PixelAggregator"]
+    assert model.aggregators[2].fc.in_features == 256  # ResNet-18's C4 width
+    model.train()
+    losses = model.forward_train(torch.randn(1, 3, 96, 128), [meta(3)],
+                                 [torch.tensor([[10.0, 10.0, 60.0, 50.0]])], [torch.tensor([2])],
+                                 torch.randn(1, 2, 3, 96, 128), [[meta(1), meta(5)]],
+                                 ref_gt_bboxes=[torch.zeros(0, 5)])
+    sum(losses.values()).backward()
+    for lvl in (2, 3):
+        assert model.aggregators[lvl].fc.weight.grad.abs().sum() > 0
+    model.eval()
+    refs = torch.randn(1, 3, 3, 96, 128)
+    with torch.no_grad():
+        out = model.simple_test(torch.randn(1, 3, 96, 128), [meta(0)], ref_img=[refs],
+                                ref_img_metas=[[[meta(0), meta(4), meta(8)]]])
+        after_refs = model.memory.sizes()
+        model.simple_test(torch.randn(1, 3, 96, 128), [meta(1)])
+    assert len(out[0]) == 30
+    assert after_refs[0] == after_refs[1] == 0 and after_refs[2] > 0 and after_refs[3] > 0
+    assert model.memory.sizes()[2] >= after_refs[2]  # the frame's own pixels were written
+    with pytest.raises(ValueError, match="branches"):
+        tiny_eovod(aggregator=dict(position="backbone", branches="cls"))
+    with pytest.raises(ValueError, match="levels"):
+        tiny_eovod(aggregator=dict(position="backbone", levels=[4]))
+
+
 def test_validation_on_the_detection_or_the_class_score():
     det_bboxes = torch.tensor([[0.0, 0.0, 10.0, 10.0, 0.3], [20.0, 20.0, 40.0, 40.0, 0.6]])
     cls_scores = torch.tensor([0.55, 0.7])  # before centerness
@@ -449,6 +485,15 @@ def test_eovod_without_a_prior_detects_plainly():
         model.simple_test(torch.randn(1, 3, 96, 128), [meta(1)], rescale=False)
     assert model.memory.sizes() == [0] * 5 and len(model._prev_boxes) == 0
     assert model._levels_to_run() == (list(range(5)), True)
+
+
+def test_backbone_variant_config_builds():
+    model = build_model(Config.fromfile(
+        REPO_ROOT / "configs/vid/eovod/eovod_fcos_r101_fpn_3x_backbone.py").model)
+    assert model.aggregate_backbone and model.queries_all and model.agg_levels == {2, 3}
+    assert [a.fc.in_features for a in model.aggregators[2:]] == [1024, 2048]
+    assert model.memory.update and model.memory.num_keys == 2000
+    assert model.train_random_keys == 2000 and model.train_plain_prob == 0.0
 
 
 @pytest.mark.parametrize("config, total, trainable", [
