@@ -266,7 +266,8 @@ class EOVOD(BaseVideoDetector):
             many queries at a time (no effect on the result); ``branches``:
             ``'all'`` feeds the aggregated maps to the whole head, ``'cls'``
             only to its classification tower, the regression tower reading
-            the original features. ``position``: ``'fpn'`` aggregates the
+            the original features (with ``position='backbone'``, the FPN runs
+            a second time on the original backbone maps for it). ``position``: ``'fpn'`` aggregates the
             FPN's outputs; ``'backbone'`` the backbone's, before the FPN (the
             released code's model), with one aggregator per level at the
             backbone's widths and strides ``backbone_strides``. ``levels``:
@@ -363,12 +364,11 @@ class EOVOD(BaseVideoDetector):
         # classification (and the centerness it carries) sees the aggregation.
         self.aggregate_reg = aggregator["branches"] == "all"
         # 'backbone': aggregate the backbone's maps before the FPN, as the
-        # released code does; the FPN and both head towers then read them.
+        # released code does; the FPN and both head towers then read them --
+        # or, with branches='cls', only the classification tower, the FPN
+        # running a second time on the original maps for the regression tower.
         self.aggregate_backbone = aggregator["position"] == "backbone"
         if self.aggregate_backbone:
-            if not self.aggregate_reg:
-                raise ValueError("aggregator.branches='cls' needs position='fpn': before the "
-                                 "FPN, both towers read the aggregated maps")
             if not getattr(self.detector, "with_neck", False):
                 raise ValueError("aggregator.position='backbone' needs a neck")
             channels = list(self.detector.neck.in_channels)
@@ -535,7 +535,9 @@ class EOVOD(BaseVideoDetector):
             gt_bboxes[0], img_metas[0]["img_shape"])
         masks = self._query_masks(key_feats, prior)
         enhanced = self._stage_two(self._enhance(key_feats, masks, keys))
-        return enhanced, (None if self.aggregate_backbone else key_feats)
+        if self.aggregate_reg:
+            return enhanced, None
+        return enhanced, self._stage_two(key_feats)
 
     def _training_keys(self, ref_feat: torch.Tensor, ref_boxes: torch.Tensor, level: int):
         """Pixels inside the support frames' ground-truth boxes at one level,
@@ -618,7 +620,10 @@ class EOVOD(BaseVideoDetector):
         enhanced = self._enhance(feats, masks, keys)
         head_feats = self._stage_two(enhanced)
 
-        reg_feats = None if self.aggregate_reg else [feats[lvl] for lvl in levels]
+        reg_feats = None
+        if not self.aggregate_reg:
+            plain = self._stage_two(feats)
+            reg_feats = [plain[lvl] for lvl in levels]
         det_bboxes, det_labels, det_levels, det_cls_scores = self.detector.bbox_head.simple_test(
             [head_feats[lvl] for lvl in levels], img_metas, rescale=False, level_ids=levels,
             with_levels=True, with_cls_scores=True, reg_feats=reg_feats,

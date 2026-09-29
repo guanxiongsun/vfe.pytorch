@@ -372,10 +372,48 @@ def test_backbone_aggregation_with_every_pixel_a_query():
     assert len(out[0]) == 30
     assert after_refs[0] == after_refs[1] == 0 and after_refs[2] > 0 and after_refs[3] > 0
     assert model.memory.sizes()[2] >= after_refs[2]  # the frame's own pixels were written
-    with pytest.raises(ValueError, match="branches"):
-        tiny_eovod(aggregator=dict(position="backbone", branches="cls"))
     with pytest.raises(ValueError, match="levels"):
         tiny_eovod(aggregator=dict(position="backbone", levels=[4]))
+
+
+def test_backbone_aggregation_for_classification_only():
+    """Before the FPN with branches='cls': the regression tower reads the FPN
+    of the original backbone maps, so boxes are those of the plain maps."""
+    model = tiny_eovod(
+        location_prior=dict(score_thr=0.0, queries="all", train_keys="random",
+                            train_random_keys=16),
+        size_prior=None,
+        memory=dict(update=True, capacity=64, num_keys=16, write_per_frame=8),
+        aggregator=dict(num_heads=4, position="backbone", levels=[2, 3], shared=False,
+                        branches="cls")).eval()
+    head = model.detector.bbox_head
+    seen = {}
+    original = head.simple_test
+
+    def spy(feats, img_metas, **kwargs):
+        seen["feats"], seen["reg"] = feats, kwargs.get("reg_feats")
+        return original(feats, img_metas, **kwargs)
+
+    head.simple_test = spy
+    img = torch.randn(1, 3, 96, 128)
+    with torch.no_grad():
+        model.simple_test(torch.randn(1, 3, 96, 128), [meta(0)],
+                          ref_img=[torch.randn(1, 2, 3, 96, 128)],
+                          ref_img_metas=[[[meta(0), meta(4)]]])
+        model.simple_test(img, [meta(1)])
+        plain = model.detector.extract_feat(img)
+        assert all(torch.equal(a, b) for a, b in zip(seen["reg"], plain, strict=True))
+        assert any(not torch.equal(a, b) for a, b in zip(seen["feats"], plain, strict=True))
+    train = tiny_eovod(
+        location_prior=dict(queries="all", train_keys="random", train_random_keys=16),
+        aggregator=dict(num_heads=4, position="backbone", levels=[2, 3], shared=False,
+                        branches="cls"))
+    train.train()
+    losses = train.forward_train(torch.randn(1, 3, 96, 128), [meta(3)],
+                                 [torch.tensor([[10.0, 10.0, 60.0, 50.0]])], [torch.tensor([2])],
+                                 torch.randn(1, 2, 3, 96, 128), [[meta(1), meta(5)]])
+    sum(losses.values()).backward()
+    assert train.aggregators[2].fc.weight.grad.abs().sum() > 0
 
 
 def test_validation_on_the_detection_or_the_class_score():
