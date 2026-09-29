@@ -395,6 +395,17 @@ python tools/checks/parity_fcos.py --compare fcos_mmdet.pt fcos_vfe.pt        # 
 
 ## Progress log
 
+- **2026-09-29 (centerness on the regression tower: the best one-epoch
+  model)** — `eovod_fcos_r101_fpn_3x_backbone_cls_ctrreg.py` (the combined
+  variant with `centerness_on_reg=True`). Full val, one epoch: **36.9 /
+  65.4 / 38.3** (APs / APm / APl 8.0 / 17.9 / 42.0; VID AP50 65.8, fast
+  45.8); with SPN (margin 1) 36.7 / 65.1 / 38.1. AP75 recovers from 35.1 to
+  38.3 — above v4's 37.8 — which confirms that centerness learned on
+  always-aggregated classification features was the AP75 cost. Against v4:
+  +0.9 AP, +2.2 AP50, +2.2 VID AP50, +5.6 on fast objects. Not yet
+  separated: how much `centerness_on_reg` gives on its own (mmdet reports
+  it helping plain FCOS too).
+
 - **2026-09-29 (before the FPN, classification only, at one epoch)** —
   `eovod_fcos_r101_fpn_3x_backbone_cls.py`: the released code's aggregation
   with the aggregated maps feeding the classification tower only (the FPN
