@@ -10,7 +10,8 @@ alike). A CUDA graph replays a captured sequence of kernels with one launch.
 * the backbone and the neck, each one graph per input shape (graphed as
   modules rather than ``extract_feat``, so models that call them apart --
   EOVOD aggregating between them -- are covered too);
-* ``bbox_head.forward_single``, one graph per level and feature shape.
+* ``bbox_head.forward_single``, one graph per level and feature shape (FCOS's
+  and YOLOX's heads).
 
 Everything data-dependent -- EOVOD's aggregation, post-processing, NMS --
 stays eager. A graph is captured the first time a shape is seen (after a few
@@ -82,13 +83,21 @@ def enable_cuda_graphs(detector: torch.nn.Module) -> None:
         neck.forward = lambda inputs: graphed_neck(*inputs)
     head = detector.bbox_head
     original = head.forward_single
-    per_stride: dict[int, GraphedCallable] = {}
-
-    def forward_single(x, scale, stride, reg_x=None):
-        if stride not in per_stride:
-            per_stride[stride] = GraphedCallable(
-                lambda a, b, s=scale, st=stride: original(a, s, st, b))
-        # The graph needs a tensor for both towers; plain FCOS feeds x to both.
-        return per_stride[stride](x, x if reg_x is None else reg_x)
+    per_level: dict[Any, GraphedCallable] = {}
+    if type(head).__name__ == "YOLOXHead":
+        # YOLOX passes each level's own modules; the class tower identifies it.
+        def forward_single(x, cls_convs, reg_convs, conv_cls, conv_reg, conv_obj, reg_x=None):
+            key = id(cls_convs)
+            if key not in per_level:
+                modules = (cls_convs, reg_convs, conv_cls, conv_reg, conv_obj)
+                per_level[key] = GraphedCallable(lambda a, b, m=modules: original(a, *m, b))
+            return per_level[key](x, x if reg_x is None else reg_x)
+    else:
+        def forward_single(x, scale, stride, reg_x=None):
+            if stride not in per_level:
+                per_level[stride] = GraphedCallable(
+                    lambda a, b, s=scale, st=stride: original(a, s, st, b))
+            # The graph needs a tensor for both towers; plain FCOS feeds x to both.
+            return per_level[stride](x, x if reg_x is None else reg_x)
 
     head.forward_single = forward_single

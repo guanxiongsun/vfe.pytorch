@@ -12,7 +12,9 @@ from vfe.registry import build_from_cfg
 
 from .auto_augment import AutoAugment
 from .formatting import (
+    Collect,
     ConcatVideoReferences,
+    DefaultFormatBundle,
     MultiImagesToTensor,
     SeqDefaultFormatBundle,
     ToList,
@@ -24,6 +26,7 @@ from .loading import (
     LoadMultiImagesFromFile,
     SeqLoadAnnotations,
 )
+from .mix import FilterAnnotations, MixUp, Mosaic, RandomAffine, YOLOXHSVRandomAug
 from .transforms import (
     Normalize,
     Pad,
@@ -63,6 +66,13 @@ __all__ = [
     "MultiImagesToTensor",
     "ToList",
     "SeqDefaultFormatBundle",
+    "DefaultFormatBundle",
+    "Collect",
+    "Mosaic",
+    "RandomAffine",
+    "MixUp",
+    "YOLOXHSVRandomAug",
+    "FilterAnnotations",
 ]
 
 

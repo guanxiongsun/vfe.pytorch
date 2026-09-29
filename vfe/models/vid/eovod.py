@@ -230,7 +230,7 @@ def _with_defaults(name: str, given: dict | None, defaults: dict) -> dict:
 @MODELS.register_module()
 class EOVOD(BaseVideoDetector):
     """Args:
-        detector: config of the wrapped single-stage detector (FCOS).
+        detector: config of the wrapped single-stage detector (FCOS, YOLOX).
         location_prior: ``score_thr`` (a detection above it is *validated*;
             the paper's 0.5), ``validate_on`` (``"score"``, the detection
             score, or ``"cls_score"``, the class score before centerness),
@@ -274,6 +274,10 @@ class EOVOD(BaseVideoDetector):
             the levels aggregated (default: all).
         ref_chunk_size: reference frames detected at once when gathering the
             key set at a video's first frame (bounds peak memory).
+        freeze_norm: keep every BatchNorm of the detector in eval mode while
+            training (running statistics frozen, affine parameters still
+            learnt). For detectors that train their BatchNorm, such as YOLOX:
+            EOVOD trains one key frame per GPU, too few for batch statistics.
         frozen_modules / train_cfg / test_cfg: as for MAMBA.
     """
 
@@ -285,12 +289,14 @@ class EOVOD(BaseVideoDetector):
         memory: dict | None = None,
         aggregator: dict | None = None,
         ref_chunk_size: int = 4,
+        freeze_norm: bool = False,
         frozen_modules=None,
         train_cfg: Any = None,
         test_cfg: Any = None,
     ):
         super().__init__()
         self.detector = build_detector(detector)
+        self.freeze_norm = freeze_norm
         head = getattr(self.detector, "bbox_head", None)
         if head is None or not hasattr(head, "strides") or not hasattr(head, "simple_test"):
             raise TypeError("EOVOD wraps a single-stage detector with a multi-level dense head")
@@ -491,12 +497,30 @@ class EOVOD(BaseVideoDetector):
 
     # ---- training --------------------------------------------------------------
 
+    def train(self, mode: bool = True):
+        super().train(mode)
+        if mode and self.freeze_norm:
+            for m in self.detector.modules():
+                if isinstance(m, nn.modules.batchnorm._BatchNorm):
+                    m.eval()
+        return self
+
     def forward_train(self, img, img_metas, gt_bboxes, gt_labels, ref_img, ref_img_metas,
                       ref_gt_bboxes=None, ref_gt_labels=None, gt_bboxes_ignore=None,
                       **kwargs) -> dict:
         """Losses for one key frame (``img``, batch size 1) and its support
         frames (``ref_img``, ``(1, R, C, H, W)``). ``ref_gt_bboxes[0]`` is
-        ``(n, 5)`` as ``[reference index, x1, y1, x2, y2]``."""
+        ``(n, 5)`` as ``[reference index, x1, y1, x2, y2]``.
+
+        Without ``ref_img`` the batch is still images (any size): the wrapped
+        detector trains on them as it would alone -- YOLOX's mixed-image,
+        multi-scale recipe -- and the aggregators sit out."""
+        if ref_img is None:
+            losses = self.detector.forward_train(img, img_metas, gt_bboxes, gt_labels,
+                                                 gt_bboxes_ignore)
+            unused = sum(p.sum() for p in self.aggregators.parameters())
+            losses["loss_cls"] = losses["loss_cls"] + 0 * unused
+            return losses
         if len(img) != 1:
             raise ValueError("EOVOD trains on one key frame per GPU")
         if self.train_plain_prob > 0 and bool(

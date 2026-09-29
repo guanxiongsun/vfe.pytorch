@@ -15,9 +15,10 @@ from __future__ import annotations
 
 from typing import Any
 
+import torch
 from torch import nn
 
-__all__ = ["build_conv_layer", "build_norm_layer", "build_activation_layer"]
+__all__ = ["Swish", "build_conv_layer", "build_norm_layer", "build_activation_layer"]
 
 CONV_LAYERS: dict[str, type[nn.Module]] = {
     "Conv": nn.Conv2d,
@@ -38,6 +39,15 @@ NORM_LAYERS: dict[str, tuple[type[nn.Module], str]] = {
     "IN": (nn.InstanceNorm2d, "in"),
 }
 
+class Swish(nn.Module):
+    """``x * sigmoid(x)``, mmcv's ``Swish`` (YOLOX's activation). Computed as
+    written rather than by ``nn.SiLU``'s fused kernel, which can differ in the
+    last bit."""
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x * torch.sigmoid(x)
+
+
 ACTIVATION_LAYERS: dict[str, type[nn.Module]] = {
     "ReLU": nn.ReLU,
     "LeakyReLU": nn.LeakyReLU,
@@ -48,6 +58,7 @@ ACTIVATION_LAYERS: dict[str, type[nn.Module]] = {
     "Sigmoid": nn.Sigmoid,
     "Tanh": nn.Tanh,
     "SiLU": nn.SiLU,
+    "Swish": Swish,
 }
 
 

@@ -100,7 +100,7 @@ class ConvModule(nn.Module):
         if self.with_activation:
             act_cfg_ = dict(act_cfg)
             # Activations without an `inplace` kwarg (e.g. GELU) must not get one.
-            if act_cfg_.get("type") not in ("Tanh", "PReLU", "Sigmoid", "GELU"):
+            if act_cfg_.get("type") not in ("Tanh", "PReLU", "Sigmoid", "GELU", "Swish"):
                 act_cfg_.setdefault("inplace", inplace)
             self.activate = build_activation_layer(act_cfg_)
 

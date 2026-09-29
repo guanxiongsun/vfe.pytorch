@@ -1,4 +1,4 @@
-"""Single-stage detectors. Port of ``mmdet.models.detectors.{single_stage,fcos}``.
+"""Single-stage detectors. Port of ``mmdet.models.detectors.{single_stage,fcos,yolox}``.
 
 Backbone (+ neck) -> one dense head that predicts boxes at every cell. The
 detector only routes: the whole ``train_cfg`` / ``test_cfg`` goes to the head,
@@ -19,7 +19,7 @@ from vfe.core import bbox2result
 from vfe.models.builder import DETECTORS, build_backbone, build_head, build_neck
 from vfe.models.detectors.base import BaseDetector
 
-__all__ = ["SingleStageDetector", "FCOS"]
+__all__ = ["SingleStageDetector", "FCOS", "YOLOX"]
 
 
 @DETECTORS.register_module()
@@ -76,3 +76,69 @@ class FCOS(SingleStageDetector):
 
     def __init__(self, backbone, neck, bbox_head, train_cfg=None, test_cfg=None):
         super().__init__(backbone, neck, bbox_head, train_cfg, test_cfg)
+
+
+@DETECTORS.register_module()
+class YOLOX(SingleStageDetector):
+    """`YOLOX <https://arxiv.org/abs/2107.08430>`_. Port of
+    ``mmdet.models.detectors.yolox``: the head is
+    :class:`~vfe.models.dense_heads.YOLOXHead`, and training is multi-scale.
+
+    Every ``random_size_interval`` training steps, process 0 draws a new
+    input size -- ``size_multiplier`` times a random integer in
+    ``random_size_range``, at the default size's aspect ratio -- and
+    broadcasts it; each batch (already padded to ``input_size``) is resized
+    to the current size with its boxes. Inference is at the pipeline's size.
+    """
+
+    def __init__(self, backbone, neck, bbox_head, train_cfg=None, test_cfg=None,
+                 input_size=(640, 640), size_multiplier=32, random_size_range=(15, 25),
+                 random_size_interval=10, init_cfg=None):
+        super().__init__(backbone, neck, bbox_head, train_cfg, test_cfg)
+        self._default_input_size = tuple(input_size)
+        self._input_size = tuple(input_size)
+        self._random_size_range = tuple(random_size_range)
+        self._random_size_interval = random_size_interval
+        self._size_multiplier = size_multiplier
+        self._progress_in_iter = 0
+
+    def forward_train(self, img, img_metas, gt_bboxes, gt_labels, gt_bboxes_ignore=None,
+                      **kwargs) -> dict[str, Any]:
+        img, gt_bboxes = self._preprocess(img, gt_bboxes)
+        losses = super().forward_train(img, img_metas, gt_bboxes, gt_labels, gt_bboxes_ignore)
+        if (self._progress_in_iter + 1) % self._random_size_interval == 0:
+            self._input_size = self._random_resize(img.device)
+        self._progress_in_iter += 1
+        return losses
+
+    def _preprocess(self, img, gt_bboxes):
+        """The batch and its boxes at the current input size. The boxes are
+        scaled in place, as in mmdet."""
+        scale_y = self._input_size[0] / self._default_input_size[0]
+        scale_x = self._input_size[1] / self._default_input_size[1]
+        if scale_x != 1 or scale_y != 1:
+            img = torch.nn.functional.interpolate(img, size=self._input_size, mode="bilinear",
+                                                  align_corners=False)
+            for gt_bbox in gt_bboxes:
+                gt_bbox[..., 0::2] = gt_bbox[..., 0::2] * scale_x
+                gt_bbox[..., 1::2] = gt_bbox[..., 1::2] * scale_y
+        return img, gt_bboxes
+
+    def _random_resize(self, device) -> tuple[int, int]:
+        import random
+
+        import torch.distributed as dist
+
+        distributed = dist.is_available() and dist.is_initialized()
+        rank = dist.get_rank() if distributed else 0
+        # NCCL broadcasts need a GPU tensor; gloo (CPU tests) a CPU one.
+        tensor = torch.zeros(2, dtype=torch.long, device=device)
+        if rank == 0:
+            size = random.randint(*self._random_size_range)
+            aspect_ratio = float(self._default_input_size[1]) / self._default_input_size[0]
+            tensor[0] = self._size_multiplier * size
+            tensor[1] = self._size_multiplier * int(aspect_ratio * size)
+        if distributed and dist.get_world_size() > 1:
+            dist.barrier()
+            dist.broadcast(tensor, 0)
+        return int(tensor[0]), int(tensor[1])

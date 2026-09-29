@@ -5,6 +5,7 @@
 > why the method is what it is. This phase is different in kind: EOVOD is
 > **implemented from its paper**, not ported from its released code. Update the
 > checkboxes and the Progress log as work proceeds.
+> EOVOD on YOLOX, the paper's second detector: [eovod-yolox-plan.md](eovod-yolox-plan.md).
 
 - **Goal:** EOVOD (*Efficient One-stage Video Object Detection by Exploiting
   Temporal Consistency*, Sun, Hua, Hu, Robertson; ECCV 2022,
