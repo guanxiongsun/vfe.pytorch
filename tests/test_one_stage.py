@@ -120,5 +120,38 @@ def test_fcos_loss_decoding_and_level_subsets():
         partial = head.simple_test([feats[1]], metas, level_ids=[1], with_levels=True)
         det_bboxes, det_labels, det_levels = partial[0]
         assert det_bboxes.shape[0] == det_levels.shape[0] and (det_levels == 1).all()
+        # The class score before centerness: never below the detection score.
+        det_bboxes, det_labels, det_levels, det_cls = head.simple_test(
+            feats, metas, with_levels=True, with_cls_scores=True)[0]
+        assert det_cls.shape == det_levels.shape and len(det_cls)
+        assert (det_cls + 1e-6 >= det_bboxes[:, 4]).all()
         with pytest.raises(ValueError):
             head(feats, level_ids=[0])  # two feature maps for one level
+        # One synchronisation per image: the same detections as per level,
+        # whether fewer scores than nms_pre pass the threshold or more.
+        for score_thr, nms_pre in ((0.3, 1000), (0.0001, 7)):
+            cfg = dict(head.test_cfg, score_thr=score_thr, nms_pre=nms_pre)
+            outs = head(feats)
+            per_level = head.get_bboxes(*outs, img_metas=metas, cfg=cfg, with_levels=True,
+                                        with_cls_scores=True)
+            head.one_sync_postprocess = True
+            one_sync = head.get_bboxes(*outs, img_metas=metas, cfg=cfg, with_levels=True,
+                                       with_cls_scores=True)
+            head.one_sync_postprocess = False
+            for a, b in zip(per_level, one_sync, strict=True):
+                assert all(torch.equal(x, y) for x, y in zip(a, b, strict=True))
+            pre = head.get_bboxes(*outs, img_metas=metas, cfg=cfg, with_nms=False)
+            head.one_sync_postprocess = True
+            pre_one = head.get_bboxes(*outs, img_metas=metas, cfg=cfg, with_nms=False)
+            head.one_sync_postprocess = False
+            assert all(torch.equal(x, y) for a, b in zip(pre, pre_one, strict=True)
+                       for x, y in zip(a, b, strict=True))
+        # Separate regression inputs: boxes follow reg_feats, scores follow feats.
+        other = [f.flip(-1) for f in feats]
+        mixed = head(feats, reg_feats=other)
+        plain, swapped = head(feats), head(other)
+        assert all(torch.equal(a, b) for a, b in zip(mixed[0], plain[0], strict=True))
+        assert all(torch.equal(a, b) for a, b in zip(mixed[2], plain[2], strict=True))
+        assert all(torch.equal(a, b) for a, b in zip(mixed[1], swapped[1], strict=True))
+        with pytest.raises(ValueError):
+            head(feats, reg_feats=other[:1])

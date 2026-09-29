@@ -109,6 +109,8 @@ def test_eovod_rejects_unknown_options_and_two_stage_detectors():
         tiny_eovod(location_prior=dict(threshold=0.5))
     with pytest.raises(ValueError, match="size_prior"):
         tiny_eovod(size_prior=dict(interval=-1))
+    with pytest.raises(ValueError, match="validate_on"):
+        tiny_eovod(location_prior=dict(validate_on="cls"))
     mamba_cfg = Config.fromfile(REPO_ROOT / "configs/vid/mamba/mamba_r101_dc5_3x.py").model
     with pytest.raises(TypeError):
         EOVOD(mamba_cfg["detector"])
@@ -142,6 +144,57 @@ def test_eovod_trains_with_ground_truth_priors_and_reference_keys():
         model.forward_train(torch.randn(2, 3, 96, 128), [meta(0)] * 2, gt * 2, None, refs, None)
 
 
+def test_training_prior_options_miss_move_and_add_boxes():
+    gt = torch.tensor([[10.0, 10.0, 60.0, 50.0], [70.0, 20.0, 120.0, 90.0]])
+    shape = (96, 128, 3)
+    plain = tiny_eovod()
+    assert torch.equal(plain._training_prior(gt, shape), scale_boxes(gt, 0.8))  # the paper's
+    only_distractors = tiny_eovod(location_prior=dict(train_drop_prob=1.0, train_distractors=3))
+    counts = set()
+    for seed in range(40):
+        torch.manual_seed(seed)
+        boxes = only_distractors._training_prior(gt, shape)
+        counts.add(len(boxes))
+        # Inside the image, and each the size of a ground-truth box (times r).
+        centre = (boxes[:, :2] + boxes[:, 2:]) / 2
+        half = (boxes[:, 2:] - boxes[:, :2]) / 0.8 / 2
+        assert ((centre - half) >= -1e-4).all() and (centre[:, 0] + half[:, 0] <= 128 + 1e-4).all()
+        assert (centre[:, 1] + half[:, 1] <= 96 + 1e-4).all()
+        sizes = {tuple(s) for s in (2 * half).round().tolist()}
+        assert sizes <= {(50.0, 40.0), (50.0, 70.0)}
+    assert counts == {0, 1, 2, 3}
+    for seed in range(20):  # no ground truth: random sizes of 10-50% of the image per side
+        torch.manual_seed(seed)
+        boxes = only_distractors._training_prior(torch.zeros(0, 4), shape)
+        frac = (boxes[:, 2:] - boxes[:, :2]) / 0.8 / torch.tensor([128.0, 96.0])
+        assert ((frac >= 0.1 - 1e-4) & (frac <= 0.5 + 1e-4)).all()
+    with pytest.raises(ValueError, match="train_plain_prob"):
+        tiny_eovod(location_prior=dict(train_plain_prob=1.5))
+    with pytest.raises(ValueError, match="train_distractors"):
+        tiny_eovod(location_prior=dict(train_distractors=-1))
+
+
+@pytest.mark.parametrize("location_prior", [
+    dict(train_plain_prob=1.0),  # a step without a prior
+    dict(train_drop_prob=1.0),  # a prior whose boxes were all dropped
+])
+def test_steps_without_aggregation_keep_the_aggregators_in_the_graph(location_prior):
+    """When nothing is aggregated the aggregators get zero gradients rather
+    than none, so DDP sees every parameter used."""
+    model = tiny_eovod(location_prior=location_prior)
+    model.train()
+    gt = [torch.tensor([[10.0, 10.0, 60.0, 50.0]])]
+    losses = model.forward_train(torch.randn(1, 3, 96, 128), [meta(3)], gt, [torch.tensor([2])],
+                                 torch.randn(1, 2, 3, 96, 128), [[meta(1), meta(5)]],
+                                 ref_gt_bboxes=[torch.tensor([[0.0, 12.0, 8.0, 58.0, 52.0]])])
+    total = sum(losses.values())
+    assert torch.isfinite(total)
+    total.backward()
+    for p in model.aggregators.parameters():
+        assert p.grad is not None and not p.grad.any()
+    assert model.detector.bbox_head.conv_cls.weight.grad.abs().sum() > 0
+
+
 def test_query_chunking_does_not_change_the_result():
     model = tiny_eovod().eval()
     feats = [torch.randn(1, 32, 12, 16)]
@@ -155,6 +208,43 @@ def test_query_chunking_does_not_change_the_result():
         chunked = model._enhance(feats, masks, keys)[0]
     assert torch.allclose(whole, chunked, atol=1e-6)
     assert torch.equal(whole[0][:, ~masks[0]], feats[0][0][:, ~masks[0]])  # background untouched
+
+
+def _reference_enhance(model, feats, masks, keys):
+    """The per-level boolean-mask version _enhance replaced (several syncs per level)."""
+    out = []
+    for level, x in enumerate(feats):
+        mask = None if masks is None else masks[level]
+        key = keys[level]
+        if mask is None or key is None or len(key) == 0 or not bool(mask.any()):
+            out.append(x)
+            continue
+        queries = x[0][:, mask].t()
+        chunks = queries.split(model.query_chunk) if model.query_chunk else (queries,)
+        enhanced = torch.cat([model._aggregator(level)(q, key) for q in chunks], dim=0)
+        x = x.clone()
+        x[0][:, mask] = enhanced.t()
+        out.append(x)
+    return out
+
+
+def test_enhance_with_one_sync_matches_the_per_level_masks():
+    model = tiny_eovod(aggregator=dict(num_heads=4, shared=False, query_chunk=5))
+    torch.manual_seed(1)
+    shapes = [(12, 16), (6, 8), (3, 4), (2, 2), (1, 1)]
+    masks = [torch.rand(h, w) > 0.6 for h, w in shapes]
+    masks[2][:] = False  # a level whose mask is empty
+    keys = [torch.randn(9, 32), None, torch.randn(4, 32), torch.randn(3, 32), torch.randn(0, 32)]
+    for grad in (False, True):
+        feats = [torch.randn(1, 32, h, w, requires_grad=grad) for h, w in shapes]
+        new = model._enhance(feats, masks, keys)
+        ref = _reference_enhance(model, feats, masks, keys)
+        assert all(torch.equal(a, b) for a, b in zip(new, ref, strict=True))
+        if grad:
+            g_new = torch.autograd.grad(sum(o.square().sum() for o in new), feats)
+            g_ref = torch.autograd.grad(sum(o.square().sum() for o in ref), feats)
+            assert all(torch.equal(a, b) for a, b in zip(g_new, g_ref, strict=True))
+    assert model._enhance(feats, None, keys) == feats  # no prior: every level as it was
 
 
 def test_size_prior_rule_follows_the_paper_with_the_superset_as_an_option():
@@ -171,6 +261,29 @@ def test_size_prior_rule_follows_the_paper_with_the_superset_as_an_option():
     superset._after_frame([], det_bboxes, det_levels, full=True)
     assert superset._active_levels == [1, 2, 3, 4]
     assert superset._levels_to_run() == ([0, 1, 2, 3, 4], True)  # T = 0: every frame is full
+
+    neighbours = tiny_eovod(size_prior=dict(interval=7, margin=1))
+    neighbours._after_frame([], det_bboxes, det_levels, full=True)
+    assert neighbours._active_levels == [0, 1, 2, 3, 4]  # 1 -> 0..2, 3 -> 2..4
+    one = tiny_eovod(size_prior=dict(interval=7, margin=1))
+    one._after_frame([], det_bboxes[:1], det_levels[:1], full=True)
+    assert one._active_levels == [2, 3, 4]
+    floor = tiny_eovod(size_prior=dict(interval=7, margin=1, margin_min_level=1))
+    floor._after_frame([], det_bboxes, det_levels, full=True)
+    assert floor._active_levels == [1, 2, 3, 4]  # level 0 is never added, only kept
+    kept = tiny_eovod(size_prior=dict(interval=7, margin=1, margin_min_level=1))
+    kept._after_frame([], det_bboxes[:1].repeat(2, 1), torch.tensor([3, 0]), full=True)
+    assert kept._active_levels == [0, 1, 2, 3, 4]  # a recorded level 0 still runs, as do its upper neighbour
+    only_p3 = tiny_eovod(size_prior=dict(interval=7, margin=1, margin_min_level=1))
+    only_p3._after_frame([], det_bboxes[:1], torch.tensor([2]), full=True)
+    assert only_p3._active_levels == [1, 2, 3]
+    down = tiny_eovod(size_prior=dict(interval=7, margin=1, margin_up=0))
+    down._after_frame([], det_bboxes, det_levels, full=True)
+    assert down._active_levels == [0, 1, 2, 3]  # 1 -> 0..1, 3 -> 2..3
+    with pytest.raises(ValueError, match="margin"):
+        tiny_eovod(size_prior=dict(margin=-1))
+    with pytest.raises(ValueError, match="margin"):
+        tiny_eovod(size_prior=dict(margin=1, margin_up=-1))
 
     nothing = tiny_eovod(size_prior=dict(interval=7))
     nothing._after_frame([], det_bboxes[2:], det_levels[2:], full=True)
@@ -190,6 +303,54 @@ def test_reference_keys_and_the_first_frame_prior():
     with torch.no_grad():
         bootstrapped._gather_reference_keys(refs, metas)
     assert bootstrapped._prev_boxes is not None and bootstrapped._prev_boxes.shape[1] == 4
+
+
+def test_classification_only_aggregation_keeps_the_boxes_plain():
+    """branches='cls': the regression tower reads the original maps, so the
+    aggregation moves scores but never the boxes of the same candidates."""
+    model = tiny_eovod(location_prior=dict(score_thr=0.0), size_prior=None,
+                       aggregator=dict(num_heads=4, branches="cls")).eval()
+    head = model.detector.bbox_head
+    seen = {}
+    original = head.simple_test
+
+    def spy(feats, img_metas, **kwargs):
+        seen["feats"], seen["reg"] = feats, kwargs.get("reg_feats")
+        return original(feats, img_metas, **kwargs)
+
+    head.simple_test = spy
+    refs = torch.randn(1, 2, 3, 96, 128)
+    with torch.no_grad():
+        model.simple_test(torch.randn(1, 3, 96, 128), [meta(0)], ref_img=[refs],
+                          ref_img_metas=[[[meta(0), meta(4)]]])
+        model.simple_test(torch.randn(1, 3, 96, 128), [meta(1)])
+        assert seen["reg"] is not None and any(
+            not torch.equal(f, r) for f, r in zip(seen["feats"], seen["reg"], strict=True))
+        boxes_mixed = head(seen["feats"], reg_feats=seen["reg"])[1]
+        boxes_plain = head(seen["reg"])[1]
+    assert all(torch.equal(a, b) for a, b in zip(boxes_mixed, boxes_plain, strict=True))
+    # Training passes the plain maps to the regression tower too.
+    train = tiny_eovod(aggregator=dict(num_heads=4, branches="cls"))
+    train.train()
+    losses = train.forward_train(torch.randn(1, 3, 96, 128), [meta(3)],
+                                 [torch.tensor([[10.0, 10.0, 60.0, 50.0]])], [torch.tensor([2])],
+                                 torch.randn(1, 2, 3, 96, 128), [[meta(1), meta(5)]],
+                                 ref_gt_bboxes=[torch.tensor([[0.0, 12.0, 8.0, 58.0, 52.0]])])
+    sum(losses.values()).backward()
+    assert train.aggregators[0].fc.weight.grad.abs().sum() > 0
+    with pytest.raises(ValueError, match="branches"):
+        tiny_eovod(aggregator=dict(branches="reg"))
+
+
+def test_validation_on_the_detection_or_the_class_score():
+    det_bboxes = torch.tensor([[0.0, 0.0, 10.0, 10.0, 0.3], [20.0, 20.0, 40.0, 40.0, 0.6]])
+    cls_scores = torch.tensor([0.55, 0.7])  # before centerness
+    levels = torch.tensor([0, 1])
+    for validate_on, expected in (("score", 1), ("cls_score", 2)):
+        model = tiny_eovod(location_prior=dict(validate_on=validate_on), size_prior=None)
+        model._after_frame([], det_bboxes, levels, full=True,
+                           valid_scores=model._validation_scores(det_bboxes, cls_scores))
+        assert len(model._prev_boxes) == expected
 
 
 def test_eovod_stateful_inference_carries_priors_across_frames():
@@ -214,10 +375,9 @@ def test_eovod_stateful_inference_carries_priors_across_frames():
     seen_levels = []
     original = model.detector.bbox_head.simple_test
 
-    def spy(feats, img_metas, rescale=False, level_ids=None, with_levels=False):
+    def spy(feats, img_metas, rescale=False, level_ids=None, **kwargs):
         seen_levels.append(list(level_ids) if level_ids is not None else list(range(5)))
-        return original(feats, img_metas, rescale=rescale, level_ids=level_ids,
-                        with_levels=with_levels)
+        return original(feats, img_metas, rescale=rescale, level_ids=level_ids, **kwargs)
 
     model.detector.bbox_head.simple_test = spy
     with torch.no_grad():
@@ -250,10 +410,12 @@ def test_eovod_memory_can_update_from_every_frame():
 
 def test_eovod_runs_through_the_trainer_with_accumulation():
     """Two micro-batches through ``train_step`` with per-virtual-rank streams:
-    the model's loss dict, the random keys and the jitter all fit the loop."""
+    the model's loss dict, the random keys and the training-prior options all
+    fit the loop."""
     from vfe.engine.trainer import RngStreams, train_step
 
-    model = tiny_eovod(location_prior=dict(train_jitter=0.1))
+    model = tiny_eovod(location_prior=dict(train_jitter=0.1, train_plain_prob=0.5,
+                                           train_drop_prob=0.3, train_distractors=2))
     model.train()
     optimizer = torch.optim.SGD([p for p in model.parameters() if p.requires_grad], lr=1e-3)
 
@@ -300,6 +462,9 @@ def test_eovod_configs_build(config, total, trainable):
     assert type(model).__name__ == "EOVOD"
     assert sum(p.numel() for p in model.parameters()) == total
     assert sum(p.numel() for p in model.parameters() if p.requires_grad) == trainable
-    assert model.size_prior_interval == 7 and model.box_ratio == 0.8
-    assert model.memory.update is False and model.memory.num_keys is None
-    assert model.train_jitter == 0.0 and model.bootstrap_first_frame is False
+    assert model.size_prior_interval == 7 and model.level_margin == 1 and model.margin_up == 1
+    assert model.box_ratio == 0.8 and model.score_thr == 0.3 and model.validate_on == "score"
+    assert model.memory.update is False and model.memory.num_keys == 4096
+    assert model.bootstrap_first_frame is False and model.aggregate_reg is False
+    assert (model.train_plain_prob, model.train_drop_prob, model.train_jitter,
+            model.train_distractors) == (0.25, 0.3, 0.1, 2)

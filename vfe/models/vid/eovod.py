@@ -42,8 +42,18 @@ options: the key set may be updated from every frame and capped, MAMBA-style
 (``memory``); the size prior may keep every level above the lowest validated
 one rather than only the levels boxes came from (``keep_higher_levels``); the
 first frame of a video, which has no previous frame, may take its own plain
-detections as its prior (``bootstrap_first_frame``); and the training prior
-may be jittered to mimic the motion between frames (``train_jitter``).
+detections as its prior (``bootstrap_first_frame``).
+
+One departure is needed rather than optional. Trained on the paper's text
+alone, the mask is exactly the key frame's objects, so "this pixel was
+aggregated" gives the label away: the head learns to detect the aggregated
+region, with its extent, instead of the object. Plain frames then score too
+low to validate anything, the prior never starts, and random boxes given as a
+prior come back as detections (the E-M3 run in docs/eovod-plan.md). The
+training prior therefore has options that make it look like a previous
+frame's detections -- steps with no prior (``train_plain_prob``), missed
+objects (``train_drop_prob``), motion (``train_jitter``) and false positives
+(``train_distractors``) -- all off by default and on in the configs.
 
 Everything random draws from torch's generator on the feature device, so
 exact gradient accumulation (``RngStreams``) covers it; nothing uses numpy.
@@ -111,6 +121,21 @@ def random_subset(feats: torch.Tensor, n: int) -> torch.Tensor:
     if len(feats) <= n:
         return feats
     return feats[torch.randperm(len(feats), device=feats.device)[:n]]
+
+
+def _distractor_boxes(n: int, gt_bboxes: torch.Tensor, img_shape: Sequence[int]) -> torch.Tensor:
+    """``n`` boxes placed uniformly inside the ``(h, w, ...)`` image, each the
+    size of a random ground-truth box (a random 10-50% of the image per side
+    when there is none): stand-ins for false positives."""
+    device, dtype = gt_bboxes.device, gt_bboxes.dtype
+    size = torch.tensor([float(img_shape[1]), float(img_shape[0])], device=device, dtype=dtype)
+    if gt_bboxes.numel():
+        idx = torch.randint(len(gt_bboxes), (n,), device=device)
+        wh = torch.minimum(gt_bboxes[idx, 2:4] - gt_bboxes[idx, :2], size)
+    else:
+        wh = (0.1 + 0.4 * torch.rand(n, 2, device=device, dtype=dtype)) * size
+    xy = torch.rand(n, 2, device=device, dtype=dtype) * (size - wh)
+    return torch.cat([xy, xy + wh], dim=1)
 
 
 class PixelAggregator(nn.Module):
@@ -207,15 +232,24 @@ class EOVOD(BaseVideoDetector):
     """Args:
         detector: config of the wrapped single-stage detector (FCOS).
         location_prior: ``score_thr`` (a detection above it is *validated*;
-            the paper's 0.5), ``box_ratio`` (the paper's adjustment ratio r,
-            0.8), ``train_jitter`` (random shift and rescale of the
-            ground-truth boxes standing in for the previous frame's
-            detections, as a fraction of box size; the paper uses none) and
-            ``bootstrap_first_frame`` (give a video's first frame its own
-            plain detections as prior; the paper skips aggregation there).
+            the paper's 0.5), ``validate_on`` (``"score"``, the detection
+            score, or ``"cls_score"``, the class score before centerness),
+            ``box_ratio`` (the paper's adjustment ratio r,
+            0.8), ``bootstrap_first_frame`` (give a video's first frame its
+            own plain detections as prior; the paper skips aggregation
+            there), and the training prior, all off by default as in the
+            paper's text: ``train_plain_prob`` (share of steps with no prior
+            at all), ``train_drop_prob`` (each ground-truth box left out of
+            the mask), ``train_jitter`` (random shift and rescale of the
+            boxes, as a fraction of box size) and ``train_distractors`` (up
+            to this many random boxes added to the mask).
         size_prior: ``interval`` -- the paper's T: after a full detection,
             this many frames run only the levels the validated boxes came
-            from; 0 is a full detection on every frame. ``keep_higher_levels``
+            from; 0 is a full detection on every frame. ``margin`` also runs
+            the levels within that many below each recorded one and
+            ``margin_up`` (default: ``margin``) above it, never adding one
+            below ``margin_min_level`` (the stride-8 level alone is about
+            two-thirds of the head's time). ``keep_higher_levels``
             also runs every level above the lowest validated one. ``None``
             disables the size prior.
         memory: see :class:`PixelMemory`; the default is the paper's fixed
@@ -223,7 +257,10 @@ class EOVOD(BaseVideoDetector):
         aggregator: ``num_heads``; ``shared`` uses one aggregator for every
             level instead of one per level; ``query_chunk`` bounds the
             ``heads x queries x keys`` attention tensor by processing that
-            many queries at a time (no effect on the result).
+            many queries at a time (no effect on the result); ``branches``:
+            ``'all'`` feeds the aggregated maps to the whole head, ``'cls'``
+            only to its classification tower, the regression tower reading
+            the original features.
         ref_chunk_size: reference frames detected at once when gathering the
             key set at a video's first frame (bounds peak memory).
         frozen_modules / train_cfg / test_cfg: as for MAMBA.
@@ -250,24 +287,48 @@ class EOVOD(BaseVideoDetector):
 
         location_prior = _with_defaults(
             "location_prior", location_prior,
-            dict(score_thr=0.5, box_ratio=0.8, train_jitter=0.0, bootstrap_first_frame=False),
+            dict(score_thr=0.5, validate_on="score", box_ratio=0.8, train_jitter=0.0,
+                 train_plain_prob=0.0, train_drop_prob=0.0, train_distractors=0,
+                 bootstrap_first_frame=False),
         )
         self.score_thr = float(location_prior["score_thr"])
+        self.validate_on = location_prior["validate_on"]
+        if self.validate_on not in ("score", "cls_score"):
+            raise ValueError("location_prior.validate_on must be 'score' or 'cls_score'")
         self.box_ratio = float(location_prior["box_ratio"])
         self.train_jitter = float(location_prior["train_jitter"])
+        self.train_plain_prob = float(location_prior["train_plain_prob"])
+        self.train_drop_prob = float(location_prior["train_drop_prob"])
+        self.train_distractors = int(location_prior["train_distractors"])
+        for name in ("train_plain_prob", "train_drop_prob"):
+            if not 0.0 <= getattr(self, name) <= 1.0:
+                raise ValueError(f"location_prior.{name} must be in [0, 1]")
+        if self.train_distractors < 0:
+            raise ValueError("location_prior.train_distractors must be at least 0")
         self.bootstrap_first_frame = bool(location_prior["bootstrap_first_frame"])
 
         if size_prior is None:
             self.size_prior_interval = None
             self.keep_higher_levels = False
+            self.level_margin = 0
+            self.margin_up = 0
+            self.margin_min_level = 0
         else:
             size_prior = _with_defaults(
-                "size_prior", size_prior, dict(interval=7, keep_higher_levels=False)
+                "size_prior", size_prior,
+                dict(interval=7, keep_higher_levels=False, margin=0, margin_up=None,
+                     margin_min_level=0)
             )
             self.size_prior_interval = int(size_prior["interval"])
             if self.size_prior_interval < 0:
                 raise ValueError("size_prior.interval must be at least 0")
             self.keep_higher_levels = bool(size_prior["keep_higher_levels"])
+            self.level_margin = int(size_prior["margin"])
+            up = size_prior["margin_up"]
+            self.margin_up = self.level_margin if up is None else int(up)
+            self.margin_min_level = int(size_prior["margin_min_level"])
+            if self.level_margin < 0 or self.margin_up < 0:
+                raise ValueError("size_prior.margin and margin_up must be at least 0")
 
         memory = _with_defaults(
             "memory", memory,
@@ -276,8 +337,14 @@ class EOVOD(BaseVideoDetector):
         self.memory = PixelMemory(len(self.strides), **memory)
 
         aggregator = _with_defaults(
-            "aggregator", aggregator, dict(num_heads=16, shared=True, query_chunk=1024)
+            "aggregator", aggregator,
+            dict(num_heads=16, shared=True, query_chunk=1024, branches="all"),
         )
+        if aggregator["branches"] not in ("all", "cls"):
+            raise ValueError("aggregator.branches must be 'all' or 'cls'")
+        # 'cls': the regression tower reads the original features, so only
+        # classification (and the centerness it carries) sees the aggregation.
+        self.aggregate_reg = aggregator["branches"] == "all"
         num_aggregators = 1 if aggregator["shared"] else len(self.strides)
         self.aggregators = nn.ModuleList(
             PixelAggregator(head.in_channels, aggregator["num_heads"])
@@ -318,20 +385,35 @@ class EOVOD(BaseVideoDetector):
         """Eq. 2: attend the masked cells of each ``(1, C, H, W)`` level over
         that level's keys and write them back; levels without a mask or keys
         pass through unchanged."""
-        out = []
-        for level, x in enumerate(feats):
-            mask = None if masks is None else masks[level]
-            key = keys[level]
-            if mask is None or key is None or len(key) == 0 or not bool(mask.any()):
-                out.append(x)
+        out = list(feats)
+        if masks is None:
+            return out
+        active = [lvl for lvl, (m, k) in enumerate(zip(masks, keys, strict=True))
+                  if m is not None and k is not None and len(k)]
+        if not active:
+            return out
+        # The masked cells of every active level with one GPU->CPU sync for
+        # the lot (plus one to split them per level) rather than several per
+        # level: nonzero visits cells in row-major order, as boolean-mask
+        # indexing does, so queries and write-back are the same.
+        sizes = [masks[lvl].numel() for lvl in active]
+        idx = torch.cat([masks[lvl].reshape(-1) for lvl in active]).nonzero().squeeze(1)
+        starts = [0]
+        for n in sizes:
+            starts.append(starts[-1] + n)
+        bounds = torch.searchsorted(idx, torch.tensor(starts, device=idx.device)).tolist()
+        for j, lvl in enumerate(active):
+            if bounds[j] == bounds[j + 1]:
                 continue
-            queries = x[0][:, mask].t()  # (N, C)
-            aggregator = self._aggregator(level)
+            cells = idx[bounds[j]:bounds[j + 1]] - starts[j]
+            x = feats[lvl]
+            queries = x[0].reshape(x.shape[1], -1)[:, cells].t()  # (N, C)
+            aggregator = self._aggregator(lvl)
             chunks = queries.split(self.query_chunk) if self.query_chunk else (queries,)
-            enhanced = torch.cat([aggregator(q, key) for q in chunks], dim=0)
+            enhanced = torch.cat([aggregator(q, keys[lvl]) for q in chunks], dim=0)
             x = x.clone()
-            x[0][:, mask] = enhanced.t()
-            out.append(x)
+            x[0].view(x.shape[1], -1)[:, cells] = enhanced.t()
+            out[lvl] = x
         return out
 
     # ---- training --------------------------------------------------------------
@@ -344,6 +426,27 @@ class EOVOD(BaseVideoDetector):
         ``(n, 5)`` as ``[reference index, x1, y1, x2, y2]``."""
         if len(img) != 1:
             raise ValueError("EOVOD trains on one key frame per GPU")
+        if self.train_plain_prob > 0 and bool(
+                torch.rand((), device=img.device) < self.train_plain_prob):
+            # No prior, as on every video's first frame at test time.
+            feats, reg_feats = self.detector.extract_feat(img), None
+        else:
+            feats, plain = self._train_features(img, img_metas, gt_bboxes, ref_img, ref_gt_bboxes)
+            reg_feats = None if self.aggregate_reg else plain
+        losses = self.detector.bbox_head.forward_train(
+            feats, img_metas, gt_bboxes, gt_labels, gt_bboxes_ignore, reg_feats=reg_feats
+        )
+        # The aggregators sit out a step without a prior, or whose boxes were
+        # all dropped; a zero-weighted term keeps them in the graph so that
+        # DDP sees every parameter used.
+        unused = sum(p.sum() for p in self.aggregators.parameters())
+        losses["loss_cls"] = losses["loss_cls"] + 0 * unused
+        return losses
+
+    def _train_features(self, img, img_metas, gt_bboxes, ref_img, ref_gt_bboxes):
+        """The key frame's levels with the training prior's cells aggregated
+        over the support frames' ground-truth pixels, and the levels as they
+        were."""
         refs = ref_img[0]
         feats = self.detector.extract_feat(torch.cat((img, refs), dim=0))
         key_feats = [f[:1] for f in feats]
@@ -354,12 +457,9 @@ class EOVOD(BaseVideoDetector):
         else:
             ref_boxes = gt_bboxes[0].new_zeros((0, 5))
         keys = [self._training_keys(ref_feats[lvl], ref_boxes, lvl) for lvl in range(self.num_levels)]
-        prior = self._training_prior(gt_bboxes[0])
+        prior = self._training_prior(gt_bboxes[0], img_metas[0]["img_shape"])
         masks = boxes_to_level_masks(prior, [f.shape[-2:] for f in key_feats], self.strides)
-        enhanced = self._enhance(key_feats, masks, keys)
-        return self.detector.bbox_head.forward_train(
-            enhanced, img_metas, gt_bboxes, gt_labels, gt_bboxes_ignore
-        )
+        return self._enhance(key_feats, masks, keys), key_feats
 
     def _training_keys(self, ref_feat: torch.Tensor, ref_boxes: torch.Tensor, level: int):
         """Pixels inside the support frames' ground-truth boxes at one level,
@@ -378,11 +478,16 @@ class EOVOD(BaseVideoDetector):
             keys = random_subset(keys, self.memory.num_keys)
         return keys
 
-    def _training_prior(self, gt_bboxes: torch.Tensor) -> torch.Tensor:
+    def _training_prior(self, gt_bboxes: torch.Tensor, img_shape: Sequence[int]) -> torch.Tensor:
         """The key frame's ground-truth boxes as the paper's training mask,
-        optionally jittered like a previous frame's detections would be, then
-        resized by ``box_ratio``."""
+        resized by ``box_ratio``. Used alone, the mask marks exactly the
+        objects and the head learns to detect the aggregation; the options
+        make it look like a previous frame's detections instead: each box
+        missed with ``train_drop_prob``, moved by ``train_jitter``, and up to
+        ``train_distractors`` false positives added."""
         boxes = gt_bboxes
+        if self.train_drop_prob > 0 and boxes.numel():
+            boxes = boxes[torch.rand(len(boxes), device=boxes.device) >= self.train_drop_prob]
         if self.train_jitter > 0 and boxes.numel():
             n = boxes.shape[0]
             wh = torch.stack([boxes[:, 2] - boxes[:, 0], boxes[:, 3] - boxes[:, 1]], dim=1)
@@ -392,6 +497,10 @@ class EOVOD(BaseVideoDetector):
             ctr = ctr + shift
             wh = wh * scale
             boxes = torch.cat([ctr - wh / 2, ctr + wh / 2], dim=1)
+        if self.train_distractors > 0:
+            n = int(torch.randint(self.train_distractors + 1, (1,), device=gt_bboxes.device))
+            if n:
+                boxes = torch.cat([boxes, _distractor_boxes(n, gt_bboxes, img_shape)])
         return scale_boxes(boxes, self.box_ratio)
 
     # ---- inference ---------------------------------------------------------------
@@ -425,11 +534,13 @@ class EOVOD(BaseVideoDetector):
         keys = [self.memory.sample(lvl) for lvl in range(self.num_levels)]
         enhanced = self._enhance(feats, masks, keys)
 
-        det_bboxes, det_labels, det_levels = self.detector.bbox_head.simple_test(
+        reg_feats = None if self.aggregate_reg else [feats[lvl] for lvl in levels]
+        det_bboxes, det_labels, det_levels, det_cls_scores = self.detector.bbox_head.simple_test(
             [enhanced[lvl] for lvl in levels], img_metas, rescale=False, level_ids=levels,
-            with_levels=True,
+            with_levels=True, with_cls_scores=True, reg_feats=reg_feats,
         )[0]
-        self._after_frame(enhanced, det_bboxes, det_levels, full)
+        self._after_frame(enhanced, det_bboxes, det_levels, full,
+                          self._validation_scores(det_bboxes, det_cls_scores))
 
         if rescale:
             det_bboxes = det_bboxes.clone()
@@ -447,15 +558,32 @@ class EOVOD(BaseVideoDetector):
         self._frames_until_full -= 1
         return list(self._active_levels), False
 
-    def _after_frame(self, feats, det_bboxes, det_levels, full: bool) -> None:
+    def _validation_scores(self, det_bboxes, det_cls_scores) -> torch.Tensor:
+        """What ``score_thr`` applies to: the detection score (class score x
+        centerness), or the class score alone -- the paper's "classification
+        score", which FCOS's centerness would otherwise pull down."""
+        return det_cls_scores if self.validate_on == "cls_score" else det_bboxes[:, 4]
+
+    def _after_frame(self, feats, det_bboxes, det_levels, full: bool,
+                     valid_scores: torch.Tensor | None = None) -> None:
         """Keep the validated boxes as the next frame's location prior, set
-        the size prior on a full frame, and (if updating) write the memory."""
-        valid = det_bboxes[:, 4] > self.score_thr
+        the size prior on a full frame, and (if updating) write the memory.
+        ``valid_scores`` default to the detection scores."""
+        if valid_scores is None:
+            valid_scores = det_bboxes[:, 4]
+        valid = (valid_scores > self.score_thr).nonzero().squeeze(1)  # the one sync
         boxes = det_bboxes[valid, :4].detach()
         self._prev_boxes = boxes
         if self.size_prior_interval is not None and full:
-            if bool(valid.any()):
+            if len(valid):
                 levels = det_levels[valid].unique(sorted=True).tolist()
+                if self.level_margin or self.margin_up:
+                    # An object near a range boundary may be detected on one
+                    # level and belong on its neighbour a few frames later.
+                    down, up, floor = self.level_margin, self.margin_up, self.margin_min_level
+                    added = {min(max(lvl + d, floor), self.num_levels - 1)
+                             for lvl in levels for d in range(-down, up + 1)}
+                    levels = sorted(added | set(levels))
                 if self.keep_higher_levels:
                     levels = list(range(levels[0], self.num_levels))
                 self._active_levels = levels
@@ -483,9 +611,11 @@ class EOVOD(BaseVideoDetector):
             metas = list(ref_metas[start:start + len(chunk)])
             start += len(chunk)
             feats = self.detector.extract_feat(chunk)
-            results = head.simple_test(feats, metas, rescale=False, with_levels=True)
-            for i, (det_bboxes, _, _) in enumerate(results):
-                boxes = det_bboxes[det_bboxes[:, 4] > self.score_thr, :4]
+            results = head.simple_test(feats, metas, rescale=False, with_levels=True,
+                                       with_cls_scores=True)
+            for i, (det_bboxes, _, _, det_cls_scores) in enumerate(results):
+                scores = self._validation_scores(det_bboxes, det_cls_scores)
+                boxes = det_bboxes[scores > self.score_thr, :4]
                 self._write_memory([f[i:i + 1] for f in feats], boxes)
                 if (self.bootstrap_first_frame and metas[i].get("frame_id") == 0
                         and self._prev_boxes is None):
