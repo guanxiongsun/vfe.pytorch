@@ -5,9 +5,11 @@ arithmetic: each pyramid level costs about the same whatever its size (on a
 GH200, ~1.2 ms of forward per level for P3's 76x128 cells and P7's 5x8
 alike). A CUDA graph replays a captured sequence of kernels with one launch.
 
-:func:`enable_cuda_graphs` wraps two things, and only when gradients are off:
+:func:`enable_cuda_graphs` wraps these, and only when gradients are off:
 
-* ``detector.extract_feat`` (backbone + neck), one graph per input shape;
+* the backbone and the neck, each one graph per input shape (graphed as
+  modules rather than ``extract_feat``, so models that call them apart --
+  EOVOD aggregating between them -- are covered too);
 * ``bbox_head.forward_single``, one graph per level and feature shape.
 
 Everything data-dependent -- EOVOD's aggregation, post-processing, NMS --
@@ -67,10 +69,17 @@ class GraphedCallable:
 
 
 def enable_cuda_graphs(detector: torch.nn.Module) -> None:
-    """Graph ``detector.extract_feat`` and its dense head's per-level forward
-    in place. ``detector`` is a single-stage detector (e.g. EOVOD's
+    """Graph the backbone, the neck and the dense head's per-level forward in
+    place. ``detector`` is a single-stage detector (e.g. EOVOD's
     ``model.detector``); call after moving it to the GPU and ``eval()``."""
-    detector.extract_feat = GraphedCallable(detector.extract_feat)
+    backbone = detector.backbone
+    backbone.forward = GraphedCallable(backbone.forward)
+    neck = getattr(detector, "neck", None)
+    if neck is not None:
+        neck_forward = neck.forward
+        # The neck takes its levels as one sequence; the graph takes tensors.
+        graphed_neck = GraphedCallable(lambda *levels: neck_forward(list(levels)))
+        neck.forward = lambda inputs: graphed_neck(*inputs)
     head = detector.bbox_head
     original = head.forward_single
     per_stride: dict[int, GraphedCallable] = {}

@@ -74,10 +74,10 @@ def iou(a, b):
     return inter / (area_a[:, None] + area_b[None] - inter)
 
 
-def score_maps(head, feats):
+def score_maps(head, feats, reg_feats=None):
     """Per level ``(H, W)`` of max-class sigmoid x centerness sigmoid: the
     score a detection at that cell would get."""
-    cls, _, ctr = head(feats)
+    cls, _, ctr = head(feats, reg_feats=reg_feats)
     return [(c[0].sigmoid().max(0).values * t[0, 0].sigmoid()) for c, t in zip(cls, ctr, strict=True)]
 
 
@@ -167,7 +167,8 @@ class Recorder:
                 self.video["ref_count"] += 1
                 self.video["ref_boxes"].append(boxes.detach().cpu().numpy())
                 if boxes.numel():
-                    masks = boxes_to_level_masks(boxes, [f.shape[-2:] for f in feats], m.strides)
+                    masks = boxes_to_level_masks(boxes, [f.shape[-2:] for f in feats],
+                                                 m.agg_strides)
                     for lvl, mask in enumerate(masks):
                         yx = mask.nonzero().cpu().numpy()  # row-major: the memory's order
                         self.video["origins"][lvl].append(np.c_[np.full(len(yx), r), yx])
@@ -198,7 +199,12 @@ class Recorder:
 
 
 def attention(model, rec, level, cy, cx, top=48):
-    """Where the query at cell (cy, cx) of ``level`` attends: mean over heads."""
+    """Where the query at cell (cy, cx) of ``level`` attends: mean over heads.
+    None when the keys cannot be traced to reference pixels: a memory that
+    takes every frame's pixels (``memory.update``) mixes them with the
+    references' and replaces them at random."""
+    if model.memory.update:
+        return None
     keys = rec.frame["keys"][level]
     origins = rec.video.get("origins", [[]] * (level + 1))[level]
     if keys is None or len(keys) == 0 or not origins:
@@ -216,7 +222,7 @@ def attention(model, rec, level, cy, cx, top=48):
     w = (torch.bmm(q, k) / (q.shape[-1] ** 0.5)).softmax(dim=2).mean(0)[0]  # (M,)
     n = min(top, len(w))
     val, idx = w.topk(n)
-    stride = model.strides[level]
+    stride = model.agg_strides[level]
     pts = []
     for v, i in zip(val.tolist(), idx.tolist(), strict=True):
         r, y, xx = origins[i]
@@ -321,10 +327,15 @@ def main():
                 if not same.any() or iou(det[j:j + 1, :4], gtb[same]).max() < 0.5:
                     fp += 1
             feats, enhanced, masks, keys = (rec.frame[k] for k in ("feats", "enhanced", "masks", "keys"))
-            plain_maps = score_maps(head, feats)
             aggregated = masks is not None and any(
                 m is not None and bool(m.any()) and kk is not None and len(kk) for m, kk in zip(masks, keys, strict=True))
-            enh_maps = score_maps(head, enhanced) if aggregated else plain_maps
+            # The maps the head reads: through the FPN when aggregation sits
+            # before it; the regression tower on the plain maps if cls-only.
+            plain_fpn = model._stage_two(feats)
+            enh_fpn = model._stage_two(enhanced) if aggregated else plain_fpn
+            reg = None if model.aggregate_reg else plain_fpn
+            plain_maps = score_maps(head, plain_fpn, reg)
+            enh_maps = score_maps(head, enh_fpn, reg) if aggregated else plain_maps
             prior = rec.frame.get("prior")
             prior_boxes = []
             if prior is not None and len(prior):
@@ -350,10 +361,13 @@ def main():
                 img_rel = f"img/{vname}_{fid:04d}.jpg"
                 save_thumb(osp.join(args.out, img_rel), meta["filename"], THUMB_W)
                 oh, ow = meta["ori_shape"][:2]
-                url, layout = atlas_png(plain_maps, enh_maps,
-                                        masks if masks is not None else [None] * len(feats))
+                # Masks live on the aggregation levels, which are the head's
+                # levels only when aggregation follows the FPN.
+                atlas_masks = (masks if masks is not None and not model.aggregate_backbone
+                               else [None] * len(plain_maps))
+                url, layout = atlas_png(plain_maps, enh_maps, atlas_masks)
                 queries = {}
-                if len(order):
+                if len(order) and not model.aggregate_backbone:
                     j = order[0]
                     lv = int(lvls[j])
                     bx = det_b[j, :4].cpu().numpy()
@@ -362,7 +376,7 @@ def main():
                     cy = min(int((bx[1] + bx[3]) / 2 // st), h - 1)
                     cx = min(int((bx[0] + bx[2]) / 2 // st), w - 1)
                     queries["top_det"] = attention(model, rec, lv, cy, cx)
-                if len(gtb):
+                if len(gtb) and not model.aggregate_backbone:
                     gb = gtb[0] * np.r_[sf[:2], sf[:2]]  # network coords
                     lv = level_for_box(gb)
                     st = model.strides[lv]
@@ -398,6 +412,8 @@ def main():
                cfg_options=args.cfg_options, score_thr=model.score_thr,
                validate_on=model.validate_on, box_ratio=model.box_ratio,
                branches="all" if model.aggregate_reg else "cls",
+               position="backbone" if model.aggregate_backbone else "fpn",
+               queries="all" if model.queries_all else "prior",
                classes=list(ds.CLASSES), summary=summary, created=time.strftime("%Y-%m-%d %H:%M"),
                videos=videos)
     path = osp.join(args.out, "runs", f"{args.run}.json")

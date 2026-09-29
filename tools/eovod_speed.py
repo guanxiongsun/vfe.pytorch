@@ -77,6 +77,10 @@ SETTINGS = [
                                      "model.location_prior.box_ratio=1.2",
                                      "model.size_prior.interval=7", "model.size_prior.margin=1",
                                      CAP], False),
+    # The checkpoint's own test-time configuration (its saved training config),
+    # e.g. for models that aggregate every pixel before the FPN.
+    ("as_trained", [], False),
+    ("as_trained_nospn", ["model.size_prior=None"], False),
     # the first setting again, last: the GPU's clock should not have drifted
     ("plain_again", PLAIN, False),
 ]
@@ -135,7 +139,13 @@ class Clock:
         if instrument:
             det, head = model.detector, model.detector.bbox_head
             self._wrap(model, "_gather_reference_keys", "gather", outer=True)
-            self._wrap(det, "extract_feat", "backbone_fpn")
+            if getattr(model, "aggregate_backbone", False):
+                # aggregation sits between the backbone and the FPN, which
+                # EOVOD then calls separately (the FPN twice if cls-only)
+                self._wrap(det.backbone, "forward", "backbone_fpn")
+                self._wrap(det.neck, "forward", "backbone_fpn")
+            else:
+                self._wrap(det, "extract_feat", "backbone_fpn")
             self._wrap(model, "_enhance", "aggregation")
             self._wrap(head, "simple_test", "head")
             return

@@ -47,14 +47,15 @@ def test_graphed_detector_matches_eager():
     torch.manual_seed(0)
     detector = build_detector(DETECTOR).cuda().eval()
     img = torch.randn(1, 3, 96, 128, device="cuda")
+    new = torch.randn_like(img)
     metas = [dict(img_shape=(96, 128, 3), scale_factor=[1.0] * 4)]
     with torch.no_grad():
+        eager_new = detector.extract_feat(new)
         feats = detector.extract_feat(img)
         eager = detector.bbox_head(feats)
         eager_dets = detector.bbox_head.simple_test(feats, metas)
         other = [f.flip(-1) for f in feats]
         eager_mixed = detector.bbox_head(feats, reg_feats=other)
-    eager_extract = detector.extract_feat  # the bound method, kept past the graphing
     enable_cuda_graphs(detector)
     with torch.no_grad():
         for _ in range(2):  # capture, then replay
@@ -62,9 +63,11 @@ def test_graphed_detector_matches_eager():
             graphed = detector.bbox_head(graphed_feats)
             graphed_dets = detector.bbox_head.simple_test(graphed_feats, metas)
         graphed_mixed = detector.bbox_head(graphed_feats, reg_feats=other)
-        new = torch.randn_like(img)  # a replay must read the new input
-        assert all(torch.equal(a, b) for a, b in zip(detector.extract_feat(new),
-                                                     eager_extract(new), strict=True))
+        # a replay must read the new input; backbone and neck replay one graph each
+        assert all(torch.equal(a, b) for a, b in zip(detector.extract_feat(new), eager_new,
+                                                     strict=True))
+        assert isinstance(detector.backbone.forward, GraphedCallable)
+        assert len(detector.backbone.forward.graphs) == 1
     assert all(torch.equal(a, b) for a, b in zip(feats, graphed_feats, strict=True))
     for eager_out, graphed_out in ((eager, graphed), (eager_mixed, graphed_mixed)):
         assert all(torch.equal(a, b) for xs, ys in zip(eager_out, graphed_out, strict=True)
