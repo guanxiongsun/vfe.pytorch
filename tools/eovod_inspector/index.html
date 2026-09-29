@@ -1,0 +1,813 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EOVOD Frame Inspector</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root {
+  --paper: #f4f6f9; --panel: #ffffff; --ink: #16202e; --muted: #5a6577; --rule: #d6dce5;
+  --accent: #2463c9; --accent-soft: #e3ecfb; --good: #178a5c; --warn: #b7791f; --bad: #c2412d;
+  --gt: #1fb57a; --det: #f0643c; --prior: #9b7bff; --att: #ffc933;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --paper: #0f141b; --panel: #161d27; --ink: #e3e8ef; --muted: #97a3b4; --rule: #2a3442;
+    --accent: #6fa0f5; --accent-soft: #1d2a40; --good: #4cc38a; --warn: #e0a84a; --bad: #f07a63;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #0f141b; --panel: #161d27; --ink: #e3e8ef; --muted: #97a3b4; --rule: #2a3442;
+  --accent: #6fa0f5; --accent-soft: #1d2a40; --good: #4cc38a; --warn: #e0a84a; --bad: #f07a63;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+}
+* { box-sizing: border-box; }
+body { background: var(--paper); color: var(--ink); font-family: var(--sans); font-size: 14px;
+  line-height: 1.45; padding-inline: 16px; padding-block: 16px 40px; }
+.wrap { max-width: 1480px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+h1 { font-size: 20px; font-weight: 600; margin: 0; text-wrap: balance; }
+h2 { font-size: 13px; font-weight: 600; margin: 0; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.sub { color: var(--muted); margin: 2px 0 0; max-width: 90ch; }
+.mono, td.num, .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 12px; }
+.row { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+label.ctl { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; }
+select, input[type="range"] { font: inherit; color: var(--ink); }
+select, input[type="text"], input[type="number"] { background: var(--panel); color: var(--ink); border: 1px solid var(--rule);
+  border-radius: 6px; padding: 4px 6px; max-width: 100%; font: inherit; }
+input:invalid { border-color: var(--bad); }
+button:disabled { opacity: .5; cursor: progress; }
+input[type="checkbox"] { accent-color: var(--accent); }
+button { font: inherit; border: 1px solid var(--rule); background: var(--panel); color: var(--ink);
+  border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+th { color: var(--muted); font-weight: 500; font-size: 12px; }
+td.num, th.num { text-align: right; }
+tr.sel td { background: var(--accent-soft); }
+.runs tr { cursor: pointer; }
+.chip { display: inline-block; border-radius: 999px; padding: 1px 8px; font-size: 12px; border: 1px solid var(--rule); color: var(--muted); }
+.chip.good { color: var(--good); border-color: currentColor; }
+.chip.bad { color: var(--bad); border-color: currentColor; }
+.chip.warn { color: var(--warn); border-color: currentColor; }
+.grid { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px; align-items: start; }
+@media (max-width: 1100px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+.views { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.view { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.view .head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.view .name { font-weight: 600; }
+.canvasbox { position: relative; width: 100%; background: #000; border-radius: 6px; overflow: hidden; }
+.canvasbox canvas { display: block; width: 100%; height: auto; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); }
+.sw { display: inline-block; width: 12px; height: 3px; vertical-align: middle; margin-right: 5px; border-radius: 2px; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; font-size: 13px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; font-family: var(--mono); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.side { display: flex; flex-direction: column; gap: 12px; }
+.timeline svg { width: 100%; height: auto; display: block; }
+.timeline .axis { stroke: var(--rule); }
+.timeline text { fill: var(--muted); font-family: var(--mono); font-size: 10px; }
+.note { color: var(--muted); font-size: 12px; }
+.frames { display: flex; flex-wrap: wrap; gap: 4px; }
+.frames button { padding: 1px 6px; font-family: var(--mono); font-size: 12px; }
+.frames button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.refsbox canvas { width: 100%; height: auto; display: block; border-radius: 4px; background: #000; }
+.empty { color: var(--muted); padding: 24px; text-align: center; }
+.err { color: var(--bad); }
+.speedchart { display: grid; grid-template-columns: minmax(120px, 230px) minmax(0, 1fr); gap: 6px 12px; align-items: center; font-size: 12px; }
+.speedchart .lab { color: var(--muted); overflow-wrap: anywhere; }
+.speedchart .track { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.speedchart .bar { display: flex; gap: 2px; height: 14px; min-width: 0; }
+.speedchart .seg { height: 100%; min-width: 1px; }
+.speedchart .seg:last-child { border-radius: 0 4px 4px 0; }
+.speedchart .tot { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--ink); white-space: nowrap; }
+.speedchart .axis { grid-column: 2; display: flex; justify-content: space-between; color: var(--muted); font-family: var(--mono); font-size: 11px; border-top: 1px solid var(--rule); padding-top: 2px; }
+#tip { position: fixed; pointer-events: none; background: var(--panel); color: var(--ink); border: 1px solid var(--rule); border-radius: 6px; padding: 4px 8px; font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.15); z-index: 10; }
+@media (max-width: 600px) { .speedchart { grid-template-columns: minmax(0, 1fr); } .speedchart .axis { grid-column: 1; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header class="row" style="justify-content: space-between; align-items: flex-end;">
+    <div>
+      <h1>EOVOD Frame Inspector</h1>
+      <p class="sub">Per-frame state of EOVOD on ImageNet VID val: detections against ground truth, the location prior carried from the previous frame, score maps with and without aggregation, the pyramid levels that ran, and where a query attends among the reference frames.</p>
+    </div>
+  </header>
+
+  <section class="panel" aria-labelledby="runs-h">
+    <div class="row" style="justify-content: space-between;">
+      <h2 id="runs-h">Runs</h2>
+      <span class="note">Click a row to show it as run A; shift-click for run B. AP is COCO-style on the dumped frames only.</span>
+    </div>
+    <div class="tablewrap"><table class="runs" id="runs"></table></div>
+  </section>
+
+  <section class="panel" aria-labelledby="new-h">
+    <div class="row" style="justify-content: space-between; margin-bottom: 8px;">
+      <h2 id="new-h">New visualisation</h2>
+      <span class="note">Runs on this node's GPU, one at a time; about 1–2 minutes for the default six videos.</span>
+    </div>
+    <form id="dump-form" class="side" style="gap: 10px;">
+      <div class="row">
+        <label class="ctl" for="d-ckpt">Checkpoint <select id="d-ckpt" required></select></label>
+        <label class="ctl" for="d-run">Run name <input id="d-run" type="text" required pattern="[A-Za-z0-9][A-Za-z0-9_.\-]{0,63}" size="34"></label>
+      </div>
+      <div class="row">
+        <label class="ctl" for="d-valid">Validate on <select id="d-valid">
+          <option value="score">detection score (class × centerness)</option>
+          <option value="cls_score" selected>class score</option>
+        </select></label>
+        <label class="ctl" for="d-thr">score_thr <input id="d-thr" type="number" min="0" max="1.5" step="0.05" value="0.5" style="width: 5em;"></label>
+        <label class="ctl" for="d-ratio">r <input id="d-ratio" type="number" min="0.1" max="2" step="0.1" value="0.8" style="width: 4.5em;"></label>
+        <label class="ctl" for="d-sp">Size prior <select id="d-sp">
+          <option value="none" selected>off (LPN only)</option>
+          <option value="7">T = 7</option><option value="14">T = 14</option>
+        </select></label>
+      </div>
+      <div class="row">
+        <label class="ctl" for="d-videos">Videos <input id="d-videos" type="text" value="0,45,120,230,340,480" size="22"></label>
+        <label class="ctl" for="d-frames">Frames per video <input id="d-frames" type="number" min="1" max="2000" value="150" style="width: 5.5em;"></label>
+        <label class="ctl" for="d-heavy">Image every <input id="d-heavy" type="number" min="1" value="15" style="width: 4.5em;"></label>
+      </div>
+      <div class="row">
+        <label class="ctl" for="d-extra" style="flex: 1 1 320px;">More options <input id="d-extra" type="text" placeholder="KEY=VALUE, space-separated (e.g. model.memory.num_keys=4096)" style="flex: 1; min-width: 0;"></label>
+        <label class="ctl" for="d-note" style="flex: 1 1 260px;">Note <input id="d-note" type="text" placeholder="shown under the run name" style="flex: 1; min-width: 0;"></label>
+        <button id="d-start" type="submit">Start</button>
+      </div>
+      <p class="note" id="d-msg" role="status"></p>
+    </form>
+    <div class="tablewrap" id="dumps"></div>
+  </section>
+
+  <section class="panel" aria-labelledby="diag-h">
+    <h2 id="diag-h" style="margin-bottom: 8px;">Diagnostics</h2>
+    <div id="diag" class="side" style="gap: 14px;"><p class="note">Loading…</p></div>
+  </section>
+
+  <section class="panel" aria-labelledby="speed-h">
+    <div class="row" style="justify-content: space-between; margin-bottom: 8px;">
+      <h2 id="speed-h">Speed</h2>
+      <span class="note">tools/eovod_speed.py: frames preloaded on the GPU, one frame at a time, CUDA-synchronised.</span>
+    </div>
+    <div id="speed" class="side" style="gap: 14px;"><p class="note">Loading…</p></div>
+    <div id="tip" hidden></div>
+  </section>
+
+  <section class="panel row" aria-label="View controls">
+    <label class="ctl" for="run-a">A <select id="run-a"></select></label>
+    <label class="ctl" for="run-b">B <select id="run-b"></select></label>
+    <label class="ctl" for="video">Video <select id="video"></select></label>
+    <label class="ctl" for="heat">Heatmap <select id="heat">
+      <option value="none">none</option>
+      <option value="plain">plain score</option>
+      <option value="enh" selected>score after aggregation</option>
+      <option value="diff">aggregated − plain</option>
+    </select></label>
+    <label class="ctl" for="level">Level <select id="level">
+      <option value="max">max over levels</option>
+      <option value="0">P3 (stride 8)</option><option value="1">P4 (16)</option>
+      <option value="2">P5 (32)</option><option value="3">P6 (64)</option><option value="4">P7 (128)</option>
+    </select></label>
+    <label class="ctl" for="minscore">Detections ≥ <input id="minscore" type="range" min="0" max="0.9" step="0.01" value="0.05"><span class="mono" id="minscore-v">0.05</span></label>
+    <label class="ctl" for="show-gt"><input id="show-gt" type="checkbox" checked> ground truth</label>
+    <label class="ctl" for="show-det"><input id="show-det" type="checkbox" checked> detections</label>
+    <label class="ctl" for="show-prior"><input id="show-prior" type="checkbox" checked> prior</label>
+    <label class="ctl" for="show-mask"><input id="show-mask" type="checkbox" checked> mask</label>
+    <label class="ctl" for="show-att"><input id="show-att" type="checkbox" checked> query</label>
+  </section>
+
+  <div class="grid">
+    <main class="side">
+      <section class="panel view-panel">
+        <div class="row" style="justify-content: space-between; margin-bottom: 8px;">
+          <h2>Frame</h2>
+          <div class="row" style="gap: 6px;">
+            <button id="prev" type="button" aria-label="Previous sampled frame">◀</button>
+            <span class="mono" id="frame-label">–</span>
+            <button id="next" type="button" aria-label="Next sampled frame">▶</button>
+          </div>
+        </div>
+        <div class="views" id="views"></div>
+        <div class="legend" style="margin-top: 8px;">
+          <span><span class="sw" style="background: var(--gt)"></span>ground truth</span>
+          <span><span class="sw" style="background: var(--det)"></span>detection (thick: validated, above the run's score_thr)</span>
+          <span><span class="sw" style="background: var(--prior)"></span>prior: previous frame's validated boxes × r</span>
+          <span><span class="sw" style="background: #4aa3ff"></span>mask cells (aggregated)</span>
+          <span><span class="sw" style="background: var(--att)"></span>query cell</span>
+        </div>
+      </section>
+      <section class="panel timeline">
+        <div class="row" style="justify-content: space-between; margin-bottom: 6px;">
+          <h2>Video timeline</h2>
+          <span class="note" id="tl-note"></span>
+        </div>
+        <div id="timelines"></div>
+        <div class="frames" id="frames" style="margin-top: 8px;"></div>
+      </section>
+    </main>
+    <aside class="side">
+      <section class="panel"><h2 style="margin-bottom: 8px;">Frame state</h2><div id="state"></div></section>
+      <section class="panel"><h2 style="margin-bottom: 8px;">Detections</h2><div class="tablewrap" id="dets"></div></section>
+      <section class="panel refsbox">
+        <div class="row" style="justify-content: space-between; margin-bottom: 8px;">
+          <h2>Attention</h2>
+          <label class="ctl" for="query">Query <select id="query">
+            <option value="top_det">top detection</option>
+            <option value="gt0">first ground-truth box</option>
+          </select></label>
+        </div>
+        <div id="att"></div>
+      </section>
+    </aside>
+  </div>
+</div>
+
+<script>
+"use strict";
+const STATE = { runs: [], cache: {}, a: null, b: null, video: 0, fid: null };
+const $ = (id) => document.getElementById(id);
+const fmt = (v, d = 3) => (v === undefined || v === null || Number.isNaN(v)) ? "–" : Number(v).toFixed(d);
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+function store(k, v) { try { localStorage.setItem("eovod-viz:" + k, v); } catch (e) {} }
+function recall(k) { try { return localStorage.getItem("eovod-viz:" + k); } catch (e) { return null; } }
+
+async function loadRun(file) {
+  const meta = STATE.runs.find((x) => x.file === file);
+  const url = meta && meta.mtime ? `${file}?v=${meta.mtime}` : file;
+  if (STATE.cache[url]) return STATE.cache[url];
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`${file}: HTTP ${r.status}`);
+  const run = await r.json();
+  STATE.cache[url] = run;
+  return run;
+}
+
+// ---- atlas decoding: R = plain score, G = aggregated score, B = mask ----
+const atlasCache = new Map();
+function decodeAtlas(frame) {
+  if (atlasCache.has(frame.atlas)) return atlasCache.get(frame.atlas);
+  const p = new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement("canvas");
+      c.width = img.width; c.height = img.height;
+      const ctx = c.getContext("2d");
+      ctx.drawImage(img, 0, 0);
+      const px = ctx.getImageData(0, 0, img.width, img.height).data;
+      const levels = frame.layout.map(([y0, h, w]) => {
+        const plain = new Float32Array(h * w), enh = new Float32Array(h * w), mask = new Uint8Array(h * w);
+        for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+          const i = ((y0 + y) * img.width + x) * 4, j = y * w + x;
+          plain[j] = px[i] / 255; enh[j] = px[i + 1] / 255; mask[j] = px[i + 2] > 127 ? 1 : 0;
+        }
+        return { h, w, plain, enh, mask };
+      });
+      resolve(levels);
+    };
+    img.onerror = () => reject(new Error("atlas decode failed"));
+    img.src = frame.atlas;
+  });
+  atlasCache.set(frame.atlas, p);
+  return p;
+}
+
+// Level l resampled onto the P3 grid (nearest), or max over levels.
+function heatGrid(levels, which, level) {
+  const base = levels[0];
+  const out = new Float32Array(base.h * base.w);
+  const mask = new Uint8Array(base.h * base.w);
+  const use = level === "max" ? levels.map((_, i) => i) : [Number(level)];
+  if (level === "max") out.fill(which === "diff" ? 0 : 0);
+  for (const l of use) {
+    const L = levels[l], f = 2 ** l;
+    for (let y = 0; y < base.h; y++) for (let x = 0; x < base.w; x++) {
+      const yy = Math.min(L.h - 1, Math.floor(y / f)), xx = Math.min(L.w - 1, Math.floor(x / f));
+      const j = yy * L.w + xx, k = y * base.w + x;
+      const v = which === "plain" ? L.plain[j] : which === "enh" ? L.enh[j] : L.enh[j] - L.plain[j];
+      if (level === "max") {
+        if (which === "diff") { if (Math.abs(v) > Math.abs(out[k])) out[k] = v; } else out[k] = Math.max(out[k], v);
+        mask[k] = mask[k] || (l === 0 ? L.mask[j] : 0);
+      } else { out[k] = v; mask[k] = L.mask[j]; }
+    }
+  }
+  return { h: base.h, w: base.w, v: out, mask };
+}
+
+function colormap(v, diverging) {
+  if (diverging) {  // blue (score lost) .. transparent .. red (score gained)
+    const a = Math.min(1, Math.abs(v) * 2.5);
+    return v >= 0 ? [240, 80, 60, a * 220] : [60, 130, 255, a * 220];
+  }
+  const t = Math.max(0, Math.min(1, v));
+  // perceptual ramp: deep violet -> magenta -> orange -> yellow, alpha grows with score
+  const stops = [[40, 11, 84], [140, 41, 129], [229, 92, 48], [252, 206, 37]];
+  const s = t * (stops.length - 1), i = Math.min(stops.length - 2, Math.floor(s)), f = s - i;
+  const c = stops[i].map((a, k) => a + (stops[i + 1][k] - a) * f);
+  return [c[0], c[1], c[2], Math.min(230, 40 + t * 600)];
+}
+
+const imgCache = new Map();
+function loadImage(src) {
+  if (!imgCache.has(src)) imgCache.set(src, new Promise((res, rej) => {
+    const im = new Image(); im.onload = () => res(im); im.onerror = () => rej(new Error("image " + src)); im.src = src;
+  }));
+  return imgCache.get(src);
+}
+
+function heavyFrames(video) { return video.frames.filter((f) => f.atlas); }
+function frameOf(run, fid) {
+  const v = run && run.videos[STATE.video];
+  return v ? v.frames.find((f) => f.fid === fid) : null;
+}
+
+async function drawView(canvas, run, frame) {
+  const im = await loadImage(frame.img);
+  const W = im.width, H = im.height, s = W / frame.w;
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(im, 0, 0);
+  const levels = await decodeAtlas(frame);
+  const which = $("heat").value, level = $("level").value;
+  const g = heatGrid(levels, which === "none" ? "enh" : which, level);
+  // one P3 cell spans 8 network px = 8/sf original px
+  const cw = (8 / frame.sf[0]) * s, ch = (8 / frame.sf[1]) * s;
+  if (which !== "none") {
+    const off = document.createElement("canvas"); off.width = g.w; off.height = g.h;
+    const octx = off.getContext("2d"), id = octx.createImageData(g.w, g.h);
+    for (let k = 0; k < g.v.length; k++) {
+      const c = colormap(g.v[k], which === "diff");
+      id.data.set([c[0], c[1], c[2], c[3]], k * 4);
+    }
+    octx.putImageData(id, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(off, 0, 0, g.w * cw, g.h * ch);
+  }
+  if ($("show-mask").checked) {
+    ctx.strokeStyle = "rgba(74,163,255,0.9)"; ctx.lineWidth = 1;
+    for (let y = 0; y < g.h; y++) for (let x = 0; x < g.w; x++) if (g.mask[y * g.w + x]) {
+      ctx.fillStyle = "rgba(74,163,255,0.18)"; ctx.fillRect(x * cw, y * ch, cw, ch);
+    }
+  }
+  const box = (b, color, width, dash) => {
+    ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = width; ctx.setLineDash(dash || []);
+    ctx.strokeRect(b[0] * s, b[1] * s, (b[2] - b[0]) * s, (b[3] - b[1]) * s); ctx.restore();
+  };
+  const label = (b, text, color) => {
+    ctx.save(); ctx.font = "600 12px " + css("--mono"); const w = ctx.measureText(text).width + 6;
+    ctx.fillStyle = color; ctx.fillRect(b[0] * s, Math.max(0, b[1] * s - 15), w, 15);
+    ctx.fillStyle = "#111"; ctx.fillText(text, b[0] * s + 3, Math.max(11, b[1] * s - 3)); ctx.restore();
+  };
+  if ($("show-prior").checked) for (const b of frame.prior) box(b, css("--prior"), 2, [6, 4]);
+  if ($("show-gt").checked) frame.gt.forEach((b) => { box(b, css("--gt"), 2.5); label(b, run.classes[b[4]], css("--gt")); });
+  if ($("show-det").checked) {
+    const min = Number($("minscore").value);
+    frame.dets.filter((d) => d[4] >= min).slice(0, 20).reverse().forEach((d) => {
+      const valid = (run.validate_on === "cls_score" && d.length > 7 ? d[7] : d[4]) > run.score_thr;
+      box(d, css("--det"), valid ? 3 : 1.2, valid ? [] : [3, 3]);
+      if (valid || d === frame.dets[0]) label(d, `${run.classes[d[5]]} ${d[4].toFixed(2)} P${d[6] + 3}`, css("--det"));
+    });
+  }
+  const q = frame.queries && frame.queries[$("query").value];
+  if ($("show-att").checked && q) {
+    const st = frame.strides[q.level];
+    const x = q.cell[1] * st / frame.sf[0] * s, y = q.cell[0] * st / frame.sf[1] * s;
+    const w = st / frame.sf[0] * s, h = st / frame.sf[1] * s;
+    ctx.save(); ctx.strokeStyle = css("--att"); ctx.lineWidth = 3; ctx.strokeRect(x, y, w, h); ctx.restore();
+  }
+}
+
+function runLabel(r) { return r ? r.run : "–"; }
+function summaryChip(r) {
+  if (!r || !r.summary) return "";
+  const ap = r.summary.AP;
+  const cls = ap >= 0.35 ? "good" : ap >= 0.15 ? "warn" : "bad";
+  return `<span class="chip ${cls}">AP ${fmt(ap * 100, 1)} · AP50 ${fmt(r.summary.AP50 * 100, 1)}</span>`;
+}
+
+async function render() {
+  const runs = [STATE.a, STATE.b].filter(Boolean);
+  const A = STATE.a;
+  if (!A) { $("views").innerHTML = '<div class="empty">No run loaded.</div>'; return; }
+  const video = A.videos[STATE.video];
+  const heavy = heavyFrames(video);
+  if (STATE.fid === null || !heavy.find((f) => f.fid === STATE.fid)) STATE.fid = heavy.length ? heavy[0].fid : null;
+  $("frame-label").textContent = STATE.fid === null ? "–" : `${video.name} · frame ${STATE.fid}`;
+  // views
+  const views = $("views");
+  views.innerHTML = "";
+  for (const r of runs) {
+    const f = frameOf(r, STATE.fid);
+    const el = document.createElement("div");
+    el.className = "view";
+    el.innerHTML = `<div class="head"><span class="name">${r === A ? "A" : "B"} · ${r.run}</span>${summaryChip(r)}</div>
+      <div class="note">${r.note || ""}</div>
+      <div class="canvasbox"><canvas aria-label="Frame ${STATE.fid} of ${video.name}, run ${r.run}"></canvas></div>
+      <div class="note mono">${f ? `top ${fmt(f.top)} · plain max ${fmt(f.plain_max)} · aggregated max ${fmt(f.enh_max)} · validated ${f.n_valid} (${f.n_fp} false) · ${f.full ? "full frame" : "levels P" + f.levels.map((l) => l + 3).join(",P")}` : "frame not in this run"}</div>`;
+    views.appendChild(el);
+    if (f && f.atlas) drawView(el.querySelector("canvas"), r, f).catch((e) => { el.querySelector(".note").innerHTML += ` <span class="err">${e.message}</span>`; });
+  }
+  renderFrameButtons(heavy);
+  renderTimelines(runs);
+  renderState(runs);
+  renderDets(runs);
+  renderAttention(runs);
+}
+
+function renderFrameButtons(heavy) {
+  const box = $("frames"); box.innerHTML = "";
+  for (const f of heavy) {
+    const b = document.createElement("button");
+    b.type = "button"; b.textContent = f.fid; b.className = f.fid === STATE.fid ? "on" : "";
+    b.setAttribute("aria-label", `Show frame ${f.fid}`);
+    b.onclick = () => { STATE.fid = f.fid; render(); };
+    box.appendChild(b);
+  }
+}
+
+function renderTimelines(runs) {
+  const host = $("timelines"); host.innerHTML = "";
+  for (const r of runs) {
+    const v = r.videos[STATE.video];
+    const n = v.frames.length, W = 1000, H = 150, top = 10, plotH = 90, x0 = 34, x1 = W - 8;
+    const X = (i) => x0 + (i / Math.max(1, n - 1)) * (x1 - x0), Y = (s) => top + (1 - s) * plotH;
+    const line = (key, color, width) => `<polyline fill="none" stroke="${color}" stroke-width="${width}" points="${v.frames.map((f, i) => `${X(i).toFixed(1)},${Y(f[key]).toFixed(1)}`).join(" ")}"/>`;
+    const hitPts = v.frames.map((f, i) => f.gt_hit.length ? `<circle cx="${X(i).toFixed(1)}" cy="${Y(Math.max(...f.gt_hit)).toFixed(1)}" r="1.6" fill="${css("--gt")}"/>` : "").join("");
+    const lane = top + plotH + 12;
+    const lanes = v.frames.map((f, i) => {
+      const w = Math.max(1, (x1 - x0) / n);
+      const agg = f.aggregated ? `<rect x="${X(i).toFixed(1)}" y="${lane}" width="${w.toFixed(1)}" height="8" fill="#4aa3ff" opacity="0.8"/>` : "";
+      const part = f.full ? "" : `<rect x="${X(i).toFixed(1)}" y="${lane + 11}" width="${w.toFixed(1)}" height="8" fill="${css("--muted")}" opacity="0.7"/>`;
+      return agg + part;
+    }).join("");
+    const cur = v.frames.findIndex((f) => f.fid === STATE.fid);
+    const marker = cur >= 0 ? `<line x1="${X(cur)}" x2="${X(cur)}" y1="${top}" y2="${lane + 19}" stroke="${css("--accent")}" stroke-width="1.5"/>` : "";
+    const ticks = [0, 0.25, 0.5, 0.75, 1].map((t) => `<line class="axis" x1="${x0}" x2="${x1}" y1="${Y(t)}" y2="${Y(t)}" stroke-width="${t === 0 ? 1 : 0.5}"/><text x="${x0 - 4}" y="${Y(t) + 3}" text-anchor="end">${t}</text>`).join("");
+    const thr = r.score_thr <= 1 ? `<line x1="${x0}" x2="${x1}" y1="${Y(r.score_thr)}" y2="${Y(r.score_thr)}" stroke="${css("--det")}" stroke-dasharray="4 3" stroke-width="1"/>` : "";
+    const div = document.createElement("div");
+    div.innerHTML = `<div class="note" style="margin: 6px 0 2px;"><b>${r === STATE.a ? "A" : "B"} · ${r.run}</b> — top detection score (orange), plain max (grey), aggregated max (blue), best ground-truth hit (green dots), score_thr (dashed)</div>
+      <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Score timeline for ${v.name}, run ${r.run}">
+        ${ticks}${thr}
+        ${line("plain_max", css("--muted"), 1)}${line("enh_max", "#4aa3ff", 1.2)}${line("top", css("--det"), 1.4)}${hitPts}
+        ${lanes}${marker}
+        <text x="${x0 - 4}" y="${lane + 7}" text-anchor="end">agg</text>
+        <text x="${x0 - 4}" y="${lane + 18}" text-anchor="end">part</text>
+        <text x="${x1}" y="${H - 2}" text-anchor="end">frame ${v.frames[n - 1].fid}</text>
+        <text x="${x0}" y="${H - 2}">frame ${v.frames[0].fid}</text>
+      </svg>`;
+    host.appendChild(div);
+  }
+  const A = STATE.a.videos[STATE.video];
+  const agg = A.frames.filter((f) => f.aggregated).length, part = A.frames.filter((f) => !f.full).length;
+  $("tl-note").textContent = `A: ${A.frames.length} frames, ${agg} aggregated, ${part} partial (size prior)`;
+}
+
+function renderState(runs) {
+  const html = runs.map((r) => {
+    const f = frameOf(r, STATE.fid), v = r.videos[STATE.video];
+    if (!f) return `<p class="note">${r.run}: frame not dumped.</p>`;
+    return `<div style="margin-bottom: 10px;"><div class="name" style="font-weight:600; margin-bottom:4px;">${r === STATE.a ? "A" : "B"} · ${r.run}</div>
+      <dl class="kv">
+        <dt>score_thr · r</dt><dd>${r.score_thr} on ${r.validate_on === "cls_score" ? "class score" : "detection score"} · ${r.box_ratio}</dd>
+        <dt>levels run</dt><dd>${f.full ? "all (full frame)" : f.levels.map((l) => "P" + (l + 3)).join(" ")}</dd>
+        <dt>prior boxes</dt><dd>${f.prior.length}</dd>
+        <dt>mask cells</dt><dd>${f.mask_frac.map((m) => (m * 100).toFixed(1) + "%").join(" · ")}</dd>
+        <dt>keys / level</dt><dd>${f.keys.join(" · ")}</dd>
+        <dt>video key set</dt><dd>${v.keys ? v.keys.join(" · ") : "–"}</dd>
+        <dt>top · plain · agg.</dt><dd>${fmt(f.top)} · ${fmt(f.plain_max)} · ${fmt(f.enh_max)}</dd>
+        <dt>validated · false</dt><dd>${f.n_valid} · ${f.n_fp}</dd>
+        <dt>ground-truth hits</dt><dd>${f.gt.map((g, i) => `${r.classes[g[4]]} ${fmt(f.gt_hit[i], 2)}`).join(", ") || "none"}</dd>
+      </dl></div>`;
+  }).join("");
+  $("state").innerHTML = html;
+}
+
+function iou(a, b) {
+  const w = Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0])), h = Math.max(0, Math.min(a[3], b[3]) - Math.max(a[1], b[1]));
+  const i = w * h; return i / ((a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - i);
+}
+
+function renderDets(runs) {
+  $("dets").innerHTML = runs.map((r) => {
+    const f = frameOf(r, STATE.fid);
+    if (!f) return "";
+    const rows = f.dets.slice(0, 10).map((d) => {
+      const best = f.gt.reduce((m, g) => g[4] === d[5] ? Math.max(m, iou(d, g)) : m, 0);
+      const ok = best >= 0.5;
+      return `<tr><td>${r.classes[d[5]]}</td><td class="num">${fmt(d[4])}</td><td class="num">P${d[6] + 3}</td>
+        <td class="num">${fmt(best, 2)}</td><td>${ok ? '<span class="chip good">hit</span>' : '<span class="chip bad">miss</span>'}</td></tr>`;
+    }).join("");
+    return `<div class="note" style="margin: 4px 0;"><b>${r === STATE.a ? "A" : "B"} · ${r.run}</b> — top 10 by score</div>
+      <table><thead><tr><th>class</th><th class="num">score</th><th class="num">level</th><th class="num">IoU (same class)</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  }).join("");
+}
+
+async function renderAttention(runs) {
+  const host = $("att"); host.innerHTML = "";
+  const key = $("query").value;
+  for (const r of runs) {
+    const f = frameOf(r, STATE.fid), v = r.videos[STATE.video];
+    const q = f && f.queries && f.queries[key];
+    const div = document.createElement("div");
+    div.style.marginBottom = "12px";
+    if (!q) {
+      div.innerHTML = `<p class="note"><b>${r === STATE.a ? "A" : "B"} · ${r.run}</b>: no attention for this query — the video's key set is empty (nothing on the reference frames scored above score_thr) or there is no such box.</p>`;
+      host.appendChild(div); continue;
+    }
+    const peak = q.entropy / q.uniform_entropy;
+    div.innerHTML = `<div class="note" style="margin-bottom: 4px;"><b>${r === STATE.a ? "A" : "B"} · ${r.run}</b></div>
+      <dl class="kv">
+        <dt>query cell</dt><dd>P${q.level + 3} (${q.cell[0]}, ${q.cell[1]}) · ${q.in_mask ? "aggregated" : "not in mask"}</dd>
+        <dt>keys</dt><dd>${q.num_keys}</dd>
+        <dt>max weight</dt><dd>${fmt(q.max_w, 4)} (uniform ${fmt(1 / q.num_keys, 5)})</dd>
+        <dt>entropy / uniform</dt><dd>${fmt(peak, 3)}</dd>
+        <dt>|Δ| / |x|</dt><dd>${q.in_mask ? fmt(q.delta_ratio, 3) : "–"}</dd>
+      </dl>
+      <p class="note" style="margin: 6px 0;">The ${q.top.length} most-attended key pixels on the reference frames, sized by weight (mean over heads); cyan boxes are each reference's validated detections, which define the key set.</p>
+      <canvas aria-label="Reference frames with attended keys"></canvas>`;
+    host.appendChild(div);
+    if (v.sprite) drawRefs(div.querySelector("canvas"), v, q).catch(() => {});
+  }
+}
+
+async function drawRefs(canvas, v, q) {
+  const im = await loadImage(v.sprite);
+  canvas.width = im.width; canvas.height = im.height;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(im, 0, 0);
+  const cell = (r) => [(r % v.cols) * v.thumb_w, Math.floor(r / v.cols) * v.thumb_h];
+  v.refs.forEach((ref, r) => {
+    const [ox, oy] = cell(r), s = v.thumb_w / ref.w;
+    ctx.strokeStyle = "rgba(80,220,255,0.9)"; ctx.lineWidth = 1.5;
+    for (const b of ref.boxes) ctx.strokeRect(ox + b[0] * s, oy + b[1] * s, (b[2] - b[0]) * s, (b[3] - b[1]) * s);
+    ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(ox, oy, 42, 14);
+    ctx.fillStyle = "#fff"; ctx.font = "11px " + css("--mono"); ctx.fillText("f" + ref.frame_id, ox + 3, oy + 11);
+  });
+  const wmax = q.top.length ? q.top[0][3] : 1;
+  for (const [r, x, y, w] of q.top) {
+    const ref = v.refs[r]; if (!ref) continue;
+    const [ox, oy] = cell(r), s = v.thumb_w / ref.w;
+    ctx.beginPath(); ctx.arc(ox + x * s, oy + y * s, 2 + 6 * Math.sqrt(w / wmax), 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(255,201,51,0.85)"; ctx.fill();
+    ctx.strokeStyle = "#111"; ctx.lineWidth = 1; ctx.stroke();
+  }
+}
+
+function renderRunsTable() {
+  const rows = STATE.runs.map((r, i) => {
+    const s = r.summary || {};
+    const sel = STATE.a && STATE.a.run === r.run ? " sel" : "";
+    return `<tr class="${sel}" data-i="${i}"><td><b>${r.run}</b></td><td>${r.note || ""}</td>
+      <td class="num">${fmt(s.AP * 100, 1)}</td><td class="num">${fmt(s.AP50 * 100, 1)}</td><td class="num">${fmt(s.AP75 * 100, 1)}</td>
+      <td class="num">${s.frames || "–"}</td><td class="mono">${r.created || ""}</td></tr>`;
+  }).join("");
+  $("runs").innerHTML = `<thead><tr><th>run</th><th>what it is</th><th class="num">AP</th><th class="num">AP50</th><th class="num">AP75</th><th class="num">frames</th><th>dumped</th></tr></thead><tbody>${rows}</tbody>`;
+  $("runs").querySelectorAll("tr[data-i]").forEach((tr) => tr.addEventListener("click", (ev) => {
+    const r = STATE.runs[Number(tr.dataset.i)];
+    if (ev.shiftKey) { $("run-b").value = r.file; } else { $("run-a").value = r.file; }
+    selectRuns();
+  }));
+}
+
+async function selectRuns() {
+  const fa = $("run-a").value, fb = $("run-b").value;
+  store("a", fa); store("b", fb);
+  STATE.a = fa ? await loadRun(fa) : null;
+  STATE.b = fb && fb !== fa ? await loadRun(fb) : null;
+  const names = STATE.a.videos.map((v, i) => `<option value="${i}">${v.name} (${v.frames.length} frames)</option>`).join("");
+  const keep = Math.min(STATE.video, STATE.a.videos.length - 1);
+  $("video").innerHTML = names; $("video").value = String(keep); STATE.video = keep;
+  renderRunsTable();
+  render();
+}
+
+const pct = (v) => (v === null || v === undefined) ? "–" : (v * 100).toFixed(1);
+async function renderDiagnostics() {
+  let d;
+  try {
+    const r = await fetch("api/diagnostics");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    d = await r.json();
+  } catch (e) { $("diag").innerHTML = `<p class="note err">Diagnostics unavailable (${e.message}).</p>`; return; }
+  const name = (id) => (d.checkpoints.find((c) => c.id === id) || { name: id }).name;
+  const ckpts = d.checkpoints.map((c) => `<tr><td><b>${c.name}</b></td><td>${c.what}</td></tr>`).join("");
+  // sweep: one row per (ckpt, validate_on), one column per threshold
+  const groups = new Map();
+  for (const r of d.sweep) {
+    const k = r.ckpt + "|" + r.validate_on;
+    if (!groups.has(k)) groups.set(k, { ckpt: r.ckpt, validate_on: r.validate_on, cells: new Map(), plain: null });
+    const g = groups.get(k);
+    if (r.thr === "never") g.plain = r; else g.cells.set(String(r.thr), r);
+  }
+  const thrs = [...new Set(d.sweep.filter((r) => r.thr !== "never").map((r) => r.thr))].sort((a, b) => b - a);
+  const sweepRows = [...groups.values()].map((g) => {
+    const base = g.plain || [...groups.values()].find((h) => h.ckpt === g.ckpt && h.plain)?.plain;
+    const cells = thrs.map((t) => {
+      const r = g.cells.get(String(t));
+      if (!r) return `<td class="num">–</td>`;
+      const gain = base && base.AP !== null ? r.AP - base.AP : null;
+      const cls = gain === null ? "" : gain > 0.005 ? "good" : gain < -0.005 ? "bad" : "";
+      return `<td class="num">${pct(r.AP)} <span class="chip ${cls}">${gain === null ? "" : (gain >= 0 ? "+" : "") + (gain * 100).toFixed(1)}</span>${r.engaged === null ? "" : `<br><span class="note">${r.engaged} frames</span>`}</td>`;
+    }).join("");
+    return `<tr><td><b>${name(g.ckpt)}</b></td><td>${g.validate_on === "cls_score" ? "class score" : "detection score"}</td><td class="num">${g.plain ? pct(g.plain.AP) : "–"}</td>${cells}</tr>`;
+  }).join("");
+  const shortcut = d.shortcut.map((r) => `<tr><td><b>${name(r.ckpt)}</b></td>
+    <td class="num">${r.plain_p50.toFixed(3)} / ${r.plain_p90.toFixed(3)}</td>
+    <td class="num">${r.prior_p50.toFixed(3)} / ${r.prior_p90.toFixed(3)}</td>
+    <td>${r.prior_p50 > 0.2 ? '<span class="chip bad">head fires on any aggregated region</span>' : '<span class="chip good">no shortcut</span>'}</td></tr>`).join("");
+  const full = d.full.map((r) => `<tr><td><b>${name(r.ckpt)}</b></td><td>${r.setting}</td><td class="num">${pct(r.AP)}</td><td class="num">${pct(r.AP50)}</td><td class="num">${pct(r.AP75)}</td><td class="num">${pct(r.vid_ap50)}</td></tr>`).join("");
+  const box = (d.box || []).map((r) => `<tr><td><b>${name(r.ckpt)}</b></td><td>${r.setting}</td><td class="num">${r.objects}</td>
+    <td class="num">${r.iou_plain.toFixed(3)} → ${r.iou_agg.toFixed(3)}</td><td class="num">${r.hi_plain.toFixed(2)} → ${r.hi_agg.toFixed(2)}</td>
+    <td class="num">${r.worse} / ${r.better}</td></tr>`).join("");
+  $("diag").innerHTML = `
+    <div class="tablewrap"><table><thead><tr><th>checkpoint</th><th>training</th></tr></thead><tbody>${ckpts}</tbody></table></div>
+    <div><div class="note" style="margin-bottom: 4px;"><b>Validation threshold sweep</b> — subset AP (%) and the gain over plain. ${d.sweep_note}</div>
+      <div class="tablewrap"><table><thead><tr><th>checkpoint</th><th>validated on</th><th class="num">plain</th>${thrs.map((t) => `<th class="num">≥ ${t}</th>`).join("")}</tr></thead><tbody>${sweepRows}</tbody></table></div></div>
+    <div><div class="note" style="margin-bottom: 4px;"><b>Shortcut test</b> — ${d.shortcut_note}</div>
+      <div class="tablewrap"><table><thead><tr><th>checkpoint</th><th class="num">plain p50 / p90</th><th class="num">aggregated p50 / p90</th><th></th></tr></thead><tbody>${shortcut}</tbody></table></div></div>
+    <div><div class="note" style="margin-bottom: 4px;"><b>Full validation set</b> — ${d.full_note}</div>
+      <div class="tablewrap"><table><thead><tr><th>checkpoint</th><th>setting</th><th class="num">AP</th><th class="num">AP50</th><th class="num">AP75</th><th class="num">VID AP50</th></tr></thead><tbody>${full}</tbody></table></div>
+      ${box ? `<div class="note" style="margin: 10px 0 4px;"><b>Box quality under aggregation</b> — ${d.box_note}</div>
+      <div class="tablewrap"><table><thead><tr><th>checkpoint</th><th>validated on</th><th class="num">objects</th><th class="num">mean IoU</th><th class="num">share IoU ≥ 0.75</th><th class="num">worse / better</th></tr></thead><tbody>${box}</tbody></table></div>` : ""}
+      ${d.spn_note ? `<p class="note" style="margin: 8px 0 0;"><b>Size prior</b> — ${d.spn_note}</p>` : ""}
+      ${(d.pending || []).map((t) => `<p class="note" style="margin: 4px 0 0;">Pending: ${t}</p>`).join("")}</div>`;
+}
+
+// ---- new dumps ----
+let pollTimer = null;
+function defaultRunName() {
+  const ck = $("d-ckpt").selectedOptions[0];
+  const base = ck ? ck.textContent.replace(/\.pth$/, "").replace(/\/epoch_/, "_e").replace(/[^A-Za-z0-9_.-]/g, "_") : "run";
+  const v = $("d-valid").value === "cls_score" ? "cls" : "det";
+  const sp = $("d-sp").value === "none" ? "lpn" : "T" + $("d-sp").value;
+  const thr = Number($("d-thr").value) > 1 ? "plain" : v + $("d-thr").value;
+  return `${base}_${thr}_${sp}`.slice(0, 64);
+}
+async function initDumpForm() {
+  try {
+    const r = await fetch("api/checkpoints");
+    const ckpts = await r.json();
+    $("d-ckpt").innerHTML = ckpts.map((c) => `<option value="${c.path}">${c.name}</option>`).join("");
+  } catch (e) { $("d-msg").innerHTML = `<span class="err">Could not list checkpoints (${e.message}).</span>`; }
+  let edited = false;
+  $("d-run").addEventListener("input", () => { edited = true; });
+  const refreshName = () => { if (!edited) $("d-run").value = defaultRunName(); };
+  for (const id of ["d-ckpt", "d-valid", "d-thr", "d-sp"]) $(id).addEventListener("change", refreshName);
+  refreshName();
+  $("dump-form").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const opts = [`model.location_prior.validate_on=${$("d-valid").value}`,
+      `model.location_prior.score_thr=${Number($("d-thr").value)}`,
+      `model.location_prior.box_ratio=${Number($("d-ratio").value)}`,
+      $("d-sp").value === "none" ? "model.size_prior=None" : `model.size_prior.interval=${$("d-sp").value}`,
+      ...$("d-extra").value.split(/\s+/).filter(Boolean)];
+    const body = { ckpt: $("d-ckpt").value, run: $("d-run").value.trim(), note: $("d-note").value.trim(),
+      cfg_options: opts, videos: $("d-videos").value.trim(), max_frames: Number($("d-frames").value),
+      heavy_every: Number($("d-heavy").value) };
+    $("d-start").disabled = true;
+    try {
+      const r = await fetch("api/dumps", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const out = await r.json();
+      if (!r.ok) throw new Error(out.error || "HTTP " + r.status);
+      $("d-msg").textContent = `Queued ${out.run}.`;
+      edited = false; refreshName();
+      pollDumps();
+    } catch (e) { $("d-msg").innerHTML = `<span class="err">Not started: ${e.message}</span>`; }
+    finally { $("d-start").disabled = false; }
+  });
+  pollDumps();
+}
+const seenDone = new Set();
+let firstPoll = true;
+async function pollDumps() {
+  clearTimeout(pollTimer);
+  let jobs = [];
+  try { jobs = await (await fetch("api/dumps")).json(); } catch (e) { return; }
+  const chip = { queued: "", running: "warn", done: "good", failed: "bad" };
+  $("dumps").innerHTML = jobs.length ? `<table><thead><tr><th>run</th><th>state</th><th>progress</th><th>options</th></tr></thead><tbody>${jobs.map((j) => {
+    const last = (j.tail || []).filter((l) => /^video |subset AP|Error|Traceback/.test(l)).slice(-1)[0] || (j.tail || []).slice(-1)[0] || "";
+    const secs = j.started ? Math.round(((j.ended || Date.now() / 1000) - j.started)) + " s" : "";
+    return `<tr><td><b>${j.run}</b></td><td><span class="chip ${chip[j.state] || ""}">${j.state}</span> <span class="note">${secs}</span></td>
+      <td class="mono" style="white-space: normal; max-width: 48ch;">${last.replace(/</g, "&lt;")}</td>
+      <td class="note" style="white-space: normal;">${j.cfg_options.join(" ")}</td></tr>`;
+  }).join("")}</tbody></table>` : "";
+  let refresh = false;
+  for (const j of jobs) if (j.state === "done" && !seenDone.has(j.id)) { seenDone.add(j.id); refresh = !firstPoll; }
+  firstPoll = false;
+  if (refresh && jobs.some((j) => j.state === "done")) {
+    const hadRuns = STATE.runs.length > 0;
+    if (await loadRunList()) { if (!hadRuns) await selectRuns(); else renderRunsTable(); }
+  }
+  if (jobs.some((j) => j.state === "queued" || j.state === "running")) pollTimer = setTimeout(pollDumps, 3000);
+}
+
+async function loadRunList() {
+  const r = await fetch("api/runs");
+  if (!r.ok) throw new Error("api/runs: HTTP " + r.status);
+  STATE.runs = await r.json();  // newest first
+  if (!STATE.runs.length) {
+    $("views").innerHTML = '<div class="empty">No dumps yet. Start one under New visualisation.</div>';
+    return false;
+  }
+  const keepA = $("run-a").value || recall("a"), keepB = $("run-b").value !== "" ? $("run-b").value : recall("b");
+  const opts = STATE.runs.map((x) => `<option value="${x.file}">${x.run}</option>`).join("");
+  $("run-a").innerHTML = opts;
+  $("run-b").innerHTML = `<option value="">(none)</option>` + opts;
+  const byFile = (f) => STATE.runs.some((x) => x.file === f);
+  $("run-a").value = keepA && byFile(keepA) ? keepA : STATE.runs[0].file;
+  $("run-b").value = keepB && byFile(keepB) ? keepB : (STATE.runs[1] ? STATE.runs[1].file : "");
+  return true;
+}
+
+const SEGMENTS = [["backbone_fpn", "backbone + FPN", "--s1"], ["head", "head", "--s2"],
+  ["aggregation", "aggregation", "--s3"], ["other", "other (priors, bookkeeping)", "--s4"]];
+function shortCkpt(path) {
+  const m = path.match(/work_dirs\/([^/]+)\/epoch_(\d+)\.pth$/);
+  if (!m) return path;
+  const v = m[1].match(/_v(\d+)$/);
+  return `${v ? "v" + v[1] : m[1]} · ${m[2]} ep`;
+}
+async function renderSpeed() {
+  let files;
+  try {
+    const r = await fetch("api/speed");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    files = await r.json();
+  } catch (e) { $("speed").innerHTML = `<p class="note err">Speed results unavailable (${e.message}).</p>`; return; }
+  if (!files.length) { $("speed").innerHTML = '<p class="note">No speed runs yet.</p>'; return; }
+  const tip = $("tip");
+  $("speed").innerHTML = files.map((f) => {
+    const rows = f.results;
+    const max = Math.max(...rows.map((r) => r.ms_other_frames));
+    const chart = rows.map((r) => {
+      const segs = SEGMENTS.map(([k, name, tok]) => {
+        const v = Math.max(0, r.breakdown_ms[k] || 0);
+        if (!v) return "";
+        return `<span class="seg" style="flex: ${v.toFixed(3)} 1 0; background: var(${tok});" data-tip="${name}: ${v.toFixed(1)} ms (${(100 * v / r.ms_other_frames).toFixed(0)}%)" tabindex="0" aria-label="${name} ${v.toFixed(1)} ms"></span>`;
+      }).join("");
+      return `<div class="lab">${shortCkpt(r.ckpt)} · ${r.setting}</div>
+        <div class="track"><div class="bar" style="width: ${(r.ms_other_frames / max * 88).toFixed(2)}%;">${segs}</div><span class="tot">${r.ms_other_frames.toFixed(1)} ms</span></div>`;
+    }).join("");
+    const ticks = [0, 0.25, 0.5, 0.75, 1].map((t) => `<span>${(t * max / 0.88).toFixed(0)}</span>`).join("");
+    const table = rows.map((r) => `<tr><td><b>${shortCkpt(r.ckpt)}</b></td><td>${r.setting}</td>
+      <td class="num">${fmt(r.fps_mean_video, 1)}</td><td class="num">${fmt(r.ms_other_frames, 1)}</td><td class="num">${fmt(r.ms_p90_other, 1)}</td>
+      <td class="num">${fmt(r.ms_first_frame, 0)}</td><td class="num">${fmt(100 * r.engaged_share, 0)}%</td><td class="num">${fmt(r.levels_mean, 1)}</td>
+      <td class="num">${fmt(r.queries_mean, 0)}</td><td class="num">${fmt(r.keys_mean, 0)}</td><td class="num">${fmt(r.ms_aggregation_engaged, 1)}</td>
+      <td class="num">${fmt(r.peak_mem_gb_above_inputs ?? r.peak_mem_gb, 1)}</td><td class="num">${fmt(100 * r.AP, 1)}</td><td class="num">${fmt(100 * r.AP50, 1)}</td></tr>`).join("");
+    return `<div>
+      ${f.note ? `<p class="note" style="margin: 0 0 6px; color: var(--warn);">${f.note}</p>` : ""}
+      <div class="note" style="margin-bottom: 6px;"><b>${f.file}</b> — ${f.gpu}, torch ${f.torch}; ${rows[0].frames} frames of ${rows[0].videos} videos (first ${f.max_frames} of val videos ${f.videos}). Bars: mean model time per frame after each video's first; the first frame also detects on 14 reference frames.</div>
+      <div class="legend" style="margin-bottom: 6px;">${SEGMENTS.map(([, name, tok]) => `<span><span class="sw" style="background: var(${tok}); height: 10px; width: 10px; border-radius: 2px;"></span>${name}</span>`).join("")}</div>
+      <div class="speedchart" role="img" aria-label="Model time per frame by component, per checkpoint and setting">${chart}<div class="axis">${ticks}</div></div>
+      <div class="tablewrap" style="margin-top: 10px;"><table><thead><tr><th>checkpoint</th><th>setting</th><th class="num">FPS (mean-length video)</th><th class="num">ms / frame</th><th class="num">p90 ms</th><th class="num">first frame ms</th><th class="num">aggregated</th><th class="num">levels run</th><th class="num">queries</th><th class="num">keys</th><th class="num">aggregation ms (when on)</th><th class="num">peak GB</th><th class="num">AP</th><th class="num">AP50</th></tr></thead><tbody>${table}</tbody></table></div>
+      <p class="note" style="margin: 4px 0 0;">AP here is on the timed frames only; the full-val numbers are under Diagnostics.</p>
+    </div>`;
+  }).join("");
+  const show = (el, x, y) => { tip.textContent = el.dataset.tip; tip.hidden = false; tip.style.left = (x + 12) + "px"; tip.style.top = (y + 12) + "px"; };
+  $("speed").querySelectorAll(".seg").forEach((el) => {
+    el.addEventListener("mousemove", (e) => show(el, e.clientX, e.clientY));
+    el.addEventListener("mouseleave", () => { tip.hidden = true; });
+    el.addEventListener("focus", () => { const r = el.getBoundingClientRect(); show(el, r.left, r.bottom); });
+    el.addEventListener("blur", () => { tip.hidden = true; });
+  });
+}
+
+async function init() {
+  renderDiagnostics();
+  renderSpeed();
+  initDumpForm();
+  let have = false;
+  try { have = await loadRunList(); } catch (e) {
+    $("views").innerHTML = `<div class="empty err">Could not load the run list (${e.message}).</div>`;
+  }
+  for (const id of ["run-a", "run-b"]) $(id).addEventListener("change", selectRuns);
+  $("video").addEventListener("change", () => { STATE.video = Number($("video").value); STATE.fid = null; render(); });
+  for (const id of ["heat", "level", "show-gt", "show-det", "show-prior", "show-mask", "show-att", "query"])
+    $(id).addEventListener("change", render);
+  $("minscore").addEventListener("input", () => { $("minscore-v").textContent = Number($("minscore").value).toFixed(2); render(); });
+  const step = (d) => {
+    const heavy = heavyFrames(STATE.a.videos[STATE.video]);
+    const i = heavy.findIndex((f) => f.fid === STATE.fid);
+    const j = Math.max(0, Math.min(heavy.length - 1, i + d));
+    STATE.fid = heavy[j].fid; render();
+  };
+  $("prev").onclick = () => step(-1); $("next").onclick = () => step(1);
+  document.addEventListener("keydown", (e) => {
+    if (e.target.tagName === "SELECT" || e.target.tagName === "INPUT") return;
+    if (e.key === "ArrowLeft") step(-1); if (e.key === "ArrowRight") step(1);
+  });
+  if (have) await selectRuns();
+}
+init();
+</script>
