@@ -395,6 +395,23 @@ python tools/checks/parity_fcos.py --compare fcos_mmdet.pt fcos_vfe.pt        # 
 
 ## Progress log
 
+- **2026-09-29 (before the FPN, classification only, at one epoch)** —
+  `eovod_fcos_r101_fpn_3x_backbone_cls.py`: the released code's aggregation
+  with the aggregated maps feeding the classification tower only (the FPN
+  runs a second time on the original backbone maps for the regression
+  tower). Full val, one epoch: **35.0 / 64.5 / 35.1** (APs / APm / APl 8.6 /
+  18.5 / 39.4; VID AP50 64.9, fast 42.6); with SPN 34.8 / 64.2 / 34.9.
+  Against v4 (36.0 / 63.2 / 37.8) and the released-style variant (35.6 /
+  66.5 / 34.3), it lands between them on AP50 and AP75 and below both on
+  AP. Clean regression inputs recovered only 0.8 of the released-style
+  model's 3.5-point AP75 loss. What the three share with v5 (whose AP75
+  also fell when the prior was on 90% of steps): FCOS's centerness here
+  comes from the classification tower, so when that tower is aggregated on
+  (nearly) every step, the centerness that ranks overlapping boxes learns on
+  aggregated maps. The released-style and combined variants never train a
+  plain step. Candidate next: `centerness_on_reg=True`, which moves
+  centerness to the regression tower.
+
 - **2026-09-29 (the released code's aggregation, at one epoch)** — The
   variant `eovod_fcos_r101_fpn_3x_backbone.py` (C4 and C5 aggregated before
   the FPN, every pixel a query, 2,000 random training keys per support
