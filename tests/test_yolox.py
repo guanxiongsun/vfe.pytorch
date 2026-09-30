@@ -363,6 +363,9 @@ def test_freeze_norm_keeps_batch_statistics_while_training():
     ("eovod_yolox_m_lpn_3e.py", 25_445_769),
     # ... or two, on the backbone's 384- and 768-channel maps.
     ("eovod_yolox_m_lpn_3e_backbone.py", 25_297_545 + 4 * (384 * 384 + 384 + 768 * 768 + 768)),
+    ("eovod_yolox_m_lpn_cls_3e.py", 25_445_769),
+    ("eovod_yolox_m_lpn_cls_3e_backbone.py",
+     25_297_545 + 4 * (384 * 384 + 384 + 768 * 768 + 768)),
 ])
 def test_yolox_configs_build(config, total):
     cfg = Config.fromfile(REPO_ROOT / "configs/vid/eovod" / config)
@@ -374,6 +377,8 @@ def test_yolox_configs_build(config, total):
     if stage_b:  # zero-initialised aggregation
         assert all(agg.fc.weight.abs().sum() == 0 for agg in model.aggregators
                    if hasattr(agg, "fc"))
+    frozen_backbone = not any(p.requires_grad for p in model.detector.backbone.parameters())
+    assert frozen_backbone == ("lpn_cls" in config)
 
 
 def test_training_from_loaded_weights_starts_the_average_there(tmp_path):
@@ -454,3 +459,24 @@ def test_before_the_pafpn_design_trains_and_runs_a_video():
         for fid in (1, 2, 3):
             out = model.simple_test(torch.randn(1, 3, 128, 160), [meta(fid)], rescale=True)
     assert len(out[0]) == 30 and model.memory.sizes()[1] > 0
+
+
+def test_freezing_all_but_the_classification_branch():
+    """Stage B can freeze the detector except the branch that reads the
+    aggregated maps, by dotted module paths."""
+    frozen = ["detector.backbone", "detector.neck", "detector.bbox_head.multi_level_reg_convs",
+              "detector.bbox_head.multi_level_conv_reg", "detector.bbox_head.multi_level_conv_obj"]
+    model = tiny_eovod(frozen_modules=frozen, freeze_norm=True,
+                       location_prior=dict(train_plain_prob=0.0))
+    trainable = {n.split(".")[0] if not n.startswith("detector") else ".".join(n.split(".")[:3])
+                 for n, p in model.named_parameters() if p.requires_grad}
+    assert trainable == {"aggregators", "detector.bbox_head.multi_level_cls_convs",
+                         "detector.bbox_head.multi_level_conv_cls"}
+    model.train()
+    losses = model.forward_train(
+        torch.randn(1, 3, 128, 160), [meta()], *[x[:1] for x in gts()],
+        ref_img=torch.randn(1, 2, 3, 128, 160), ref_img_metas=[[meta(1), meta(2)]],
+        ref_gt_bboxes=[torch.tensor([[0.0, 12.0, 14.0, 72.0, 88.0]])])
+    sum(losses.values()).backward()
+    assert model.detector.bbox_head.multi_level_conv_cls[0].weight.grad is not None
+    assert model.detector.backbone.stem.conv.conv.weight.grad is None
