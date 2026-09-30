@@ -287,6 +287,7 @@ def test_released_checkpoint_keys_are_unchanged():
 
 @pytest.mark.parametrize("config, roi_head, pixel_position", [
     ("mamba_full_r101_dc5_3x.py", "MambaRoIHead", "backbone"),
+    ("mamba_full_r101_dc5_6x.py", "MambaRoIHead", "backbone"),
     ("mamba_pix_r101_dc5_3x.py", "StandardRoIHead", "backbone"),
     ("mamba_pix_neck_r101_dc5_3x.py", "StandardRoIHead", "neck"),
     ("frcnn_r101_dc5_3x.py", "StandardRoIHead", None),
