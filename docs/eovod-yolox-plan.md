@@ -117,6 +117,24 @@ CONFIG=configs/vid/eovod/eovod_yolox_m_10e.py NAME=eovod_yolox_m_10e ACCUMULATE=
 
 ## Progress log
 
+- **2026-09-30 (stage B, second attempt: no drift, and no gain)** — The
+  detector frozen except its classification branch, zero-initialised
+  aggregators learning at 1e-2, one epoch from stage A's detector (jobs
+  6961022, 6961026). Full val, AP / AP50 / AP75:
+
+  | Design | plain | LPN | LPN + SPN |
+  | :-- | --: | --: | --: |
+  | paper-text | 55.9 / 75.8 / 62.4 | 56.0 / 75.8 / 62.5 | 55.0 / 74.4 / 61.4 |
+  | before the PAFPN | 56.0 / 75.7 / 62.5 | 56.0 / 75.8 / 62.6 | 55.1 / 74.5 / 61.5 |
+
+  Freezing removed the drift (plain 55.9-56.0 against stage A's 56.1), but
+  the location prior adds at most 0.1 AP, and the size prior costs 1 AP (the
+  paper: -0.6). The aggregators learned more than before -- output
+  projections at norms 0.6-1.8, against 0.06-0.2 -- but still little. On
+  this YOLOX-M, which starts 6.7 AP above the paper's and already above its
+  YOLOX-M + LPN (53.3), a prior trained onto the finished detector does not
+  help; on FCOS the prior's gain (+4.2) came from training with it from the
+  start.
 - **2026-09-30 (stage B, first attempt: the detector drifted, the prior never
   learned)** — One epoch from stage A (56.1), full val:
 
