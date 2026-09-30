@@ -79,14 +79,35 @@ config uses).
   in every variant, stateful inference, the rescale path, the released
   checkpoint's keys unchanged), and a full-size CPU smoke of the R-101
   configs at 600x1000 with 14 references.
-- [ ] **P2 — Table 3 at one epoch** (batch 8, lr 1e-3, ImageNet init): the
-  four rows plus the neck-map variant. Success = pix well above the baseline
-  and full at least ins.
+- [x] **P2 — Table 3 at one epoch** (batch 8, lr 1e-3, ImageNet init): the
+  pixel level works alone (+4.5 AP50 over Faster R-CNN), but full (71.5) is
+  below instance-only (72.1). Suspected cause: ground-truth training keys
+  (below); random keys under test.
 - [ ] **P3 — the full schedule**, with the user's approval: the paper's two
   phases or a single 6x run of the chosen variant.
 
 ## Progress log
 
+- **2026-09-30 (P2: the ablation at one epoch)** — Full val, VID AP50:
+
+  | Variant | all | fast | medium | slow | vs baseline | paper, full schedule |
+  | :-- | --: | --: | --: | --: | --: | --: |
+  | Faster R-CNN | 66.0 | 42.2 | 64.9 | 74.0 | | (75.4) |
+  | pixel (backbone map) | 70.5 | 50.0 | 69.4 | 77.9 | +4.5 | +6.4 |
+  | pixel (neck map) | 70.6 | 53.1 | 70.0 | 75.7 | +4.6 | |
+  | instance (released) | 72.1 | 52.3 | 71.6 | 78.3 | +6.1 | +8.3 |
+  | full (pixel + instance) | 71.5 | 48.1 | 70.0 | 79.7 | +5.5 | +9.2 |
+
+  Each level alone follows the paper's pattern; together they do not add,
+  and fast motion drops (48.1 against 52.3). The training losses point at the
+  keys: every model with the pixel level ends the epoch far lower (0.23)
+  than instance-only (0.29) or the baseline (0.31), yet does worse on val.
+  Ground-truth training keys hand the key frame its objects' pixels -- on
+  DET images the "references" are the key image itself -- while test keys
+  come from imperfect detections: EOVOD's E-M3 leak in another form. `MPN`'s
+  released configs, and the FCOS design that reproduced EOVOD's paper, used
+  random keys. Submitted: pixel and full with `train_keys='random'`, one
+  epoch each (jobs 6959333 / 6959335, evaluations 6959334 / 6959336).
 - **2026-09-29 (P2 submitted)** — Five 1-epoch runs, each with a chained
   full-val evaluation, from a separate Isambard worktree
   (`~/code/vfe-mamba`, so the queued EOVOD jobs keep their checkout): ins
