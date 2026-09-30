@@ -21,14 +21,21 @@
   level ever skipped. Its FCOS is the same mmdet FCOS this implementation is
   checked against, and its checkpoint's score matches the paper's LPN-only row.
 
-## Status (2026-09-29)
+## Status (2026-09-30)
 
-- **The v4 recipe at 9 epochs reproduces the paper's FCOS and most of
-  EOVOD** (full val, COCO-style): plain 49.8 / 73.6 / 54.6 — the paper's
-  FCOS is 49.8 / 73.3 / 54.6; LPN **51.7** / 77.1 / 56.5; LPN + SPN
-  (margin 1, the default) **51.7 / 76.9** / 56.4 — the paper's LPN + SPN
-  is 53.8 / 76.9. The prior's gain is +1.9 AP / +3.5 AP50 (+5.4 VID AP50 on
-  fast objects) against the paper's +4.3 / +6.5; that is the remaining gap.
+- **EOVOD's paper reproduced at 9 epochs** (full val, COCO-style) by
+  `eovod_fcos_r101_fpn_9x_backbone_cls_ctrreg.py`: LPN **54.0 / 79.2 / 59.3**
+  (the paper 54.1 / 79.8 / 59.5); LPN + SPN **53.8 / 78.9 / 59.2** (the
+  paper 53.8 / 76.9 / 58.9); VID AP50 79.7 / 79.4. FCOS alone on the same
+  schedule is 49.8 / 73.6 / 54.6 (the paper's 49.8 / 73.3 / 54.6), so the
+  gain is +4.2 AP (the paper +4.3). The design: C4 and C5 aggregated before
+  the FPN, every pixel a query, a memory bank of validated pixels (the
+  released code's), the aggregated maps feeding the classification tower only,
+  and FCOS's centerness computed from the regression tower. The released
+  checkpoint scores 54.0 / 79.7 / 59.3.
+- **The paper-text design** (the prior's cells on the FPN levels; the v4
+  recipe below) reaches 51.7 / 77.1 / 56.5 at 9 epochs (52.2 with r 1.2 and
+  validation at 0.2): +1.9 AP over FCOS.
 - **Speed follows the paper's pattern** when measured eager, as the paper
   would have: LPN −18% FPS against plain (the paper −19%), LPN + SPN with the
   paper's rule (margin 0) +7% (the paper +7%). With neighbour levels
@@ -395,6 +402,19 @@ python tools/checks/parity_fcos.py --compare fcos_mmdet.pt fcos_vfe.pt        # 
 
 ## Progress log
 
+- **2026-09-30 (the paper reproduced at 9 epochs; the centerness controls)**
+  — The best one-epoch design at 9 epochs (job 6954576, 7 h on 4 GH200s):
+  **54.0 / 79.2 / 59.3** (APs / APm / APl 10.8 / 26.8 / 60.4; VID AP50
+  79.7, fast 59.3); with SPN (margin 1) 53.8 / 78.9 / 59.2 (VID 79.4). The
+  paper: LPN 54.1 / 79.8 / 59.5, + SPN 53.8 / 76.9 / 58.9. Against FCOS
+  alone on the same schedule (49.8), +4.2 AP, the paper's +4.3. The two
+  one-epoch controls separate the centerness change: FCOS alone with
+  `centerness_on_reg` 35.2 / 62.1 / 36.5 (without it 33.7 / 59.8 / 35.0,
+  so +1.5 AP on its own), but the paper-text design with it 35.3 / 63.1 /
+  35.4 (LPN; plain 33.1) against 36.0 / 63.2 / 37.8 without. The change
+  helps where the classification tower is aggregated on every step (the
+  before-FPN design: 35.0 -> 36.9) and not where the prior aggregates a
+  quarter of the steps' cells. Speed of the 9-epoch model: job 6959332.
 - **2026-09-29 (centerness on the regression tower: the best one-epoch
   model)** — `eovod_fcos_r101_fpn_3x_backbone_cls_ctrreg.py` (the combined
   variant with `centerness_on_reg=True`). Full val, one epoch: **36.9 /
