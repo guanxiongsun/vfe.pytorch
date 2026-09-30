@@ -96,12 +96,12 @@ checkpoint layout serve both stages and the evaluation.
 - [x] **Y2 — the training recipe**: transforms (bit-exact), schedule, hooks,
   the still-image path through EOVOD.
 - [x] **Y3 — the COCO weights**, converted and checked.
-- [ ] **Y4 — stage A at 10 epochs** (then 80 with the user's approval): YOLOX-M
-  alone, evaluated plain on the full val set. The paper's YOLOX-M is 49.4 AP
-  at 80 epochs.
+- [x] **Y4 — stage A at 10 epochs**: YOLOX-M alone, **56.1 / 75.7 / 62.5**
+  on the full val set -- above the paper's YOLOX-M at 80 epochs (49.4) and
+  its + LPN (53.3). The 80-epoch run awaits the user's decision.
 - [ ] **Y5 — stage B**: the location prior on YOLOX (frozen BatchNorm, video
-  clips at 640, the FCOS recipe's decorrelated training prior), then LPN and
-  LPN + SPN evaluations and speed.
+  clips at 640, zero-initialised aggregation), two designs at one epoch, then
+  LPN and LPN + SPN evaluations and speed.
 
 ## Running it
 
@@ -117,6 +117,19 @@ CONFIG=configs/vid/eovod/eovod_yolox_m_10e.py NAME=eovod_yolox_m_10e ACCUMULATE=
 
 ## Progress log
 
+- **2026-09-30 (stage A at 10 epochs; stage B submitted)** — YOLOX-M alone,
+  10 epochs from COCO (job 6955929, 1 h 20 min on 4 GH200s, 0.14 s per step
+  of 32 images): full val **56.1 / 75.7 / 62.5** (APs / APm / APl 13.1 /
+  28.7 / 62.5; VID AP50 76.2, fast 51.3). That is 6.7 AP above the paper's
+  YOLOX-M, whose initialisation the paper does not state; COCO is the likely
+  difference, so the paper's absolute numbers are not the bar here -- LPN's
+  gain over this model is. Stage B at one epoch from it (`--load-from`),
+  each evaluated with and without the size prior: the paper-text design
+  (`eovod_yolox_m_lpn_3e.py`, job 6959337) and the before-PAFPN design
+  (`_backbone.py`, 6959340); stage A's speed, 6959343. Stage B starts from a
+  trained detector, so the aggregators' output projections start at zero
+  (`aggregator.zero_init`: aggregation is the identity until it learns) and
+  learn at 1e-3 while the detector continues at 1e-4.
 - **2026-09-29 (the smoke run, and an EMA bug)** — The 1-GPU smoke (6955928)
   passed the tests on the GH200 (including CUDA graphs of YOLOX's head),
   trained 60 steps on real data, and ran 3 videos plain (58 frames/s) and
