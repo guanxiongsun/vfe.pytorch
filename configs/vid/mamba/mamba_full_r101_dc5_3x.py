@@ -2,8 +2,10 @@
 # 83.7): the released model's instance level plus the pixel level, which
 # enhances the backbone's DC5 map before the ChannelMapper, RPN and RoI head.
 # The paper fixes K = 100 pixels per detected box and 2,000 keys (the memory's
-# default key_length); the score threshold and the per-frame cap follow the
-# released EOVOD code's MPN, the same design on FCOS.
+# default key_length); the score threshold, the per-frame cap and the random
+# training keys follow the released EOVOD code's MPN, the same design on FCOS.
+# Keys from the ground-truth boxes instead leak (on DET images the references
+# are the key image itself): at one epoch, 71.5 against 75.6 VID AP50.
 _base_ = ['./mamba_r101_dc5_3x.py']
 
 model = dict(
@@ -12,7 +14,7 @@ model = dict(
         num_attention_blocks=16,
         position='backbone',
         stride=16,
-        train_keys='gt',
+        train_keys='random',
         score_thr=0.3,
         pixels_per_box=100,
         pixels_per_frame=1000,

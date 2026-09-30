@@ -45,10 +45,10 @@
   the ChannelMapper; `position='backbone'`) -- the released EOVOD code's
   `MPN`, the same design on FCOS, enhances backbone maps (`before_fpn`).
   `position='neck'` enhances the ChannelMapper's 512-channel output.
-- *Training keys:* K random pixels inside each reference frame's
-  ground-truth boxes (`train_keys='gt'`: the test-time rule with ground truth
-  for detections), capped at 2,000 like a test-time read; `'random'` takes
-  2,000 random pixels per reference frame (`MPN`'s released configs).
+- *Training keys:* 2,000 random pixels per reference frame, capped at 2,000
+  like a test-time read (`train_keys='random'`, `MPN`'s released configs).
+  The alternative, K random pixels inside each reference frame's ground-truth
+  boxes (`'gt'`), leaks and costs 4.1 AP50 in the full model at one epoch.
 - *Which detections are written:* score above 0.3, at most 1,000 pixels per
   frame, the 50 highest-norm pixels when nothing qualifies (all `MPN`'s).
 - *The first frame:* detection on the 14 reference frames and the key frame
@@ -79,15 +79,22 @@ config uses).
   in every variant, stateful inference, the rescale path, the released
   checkpoint's keys unchanged), and a full-size CPU smoke of the R-101
   configs at 600x1000 with 14 references.
-- [x] **P2 — Table 3 at one epoch** (batch 8, lr 1e-3, ImageNet init): the
-  pixel level works alone (+4.5 AP50 over Faster R-CNN), but full (71.5) is
-  below instance-only (72.1). Suspected cause: ground-truth training keys
-  (below); random keys under test.
+- [x] **P2 — Table 3 at one epoch** (batch 8, lr 1e-3, ImageNet init): with
+  random training keys, pixel-only 72.6 (+6.6 AP50 over Faster R-CNN's 66.0)
+  and full **75.6** (+3.5 over instance-only's 72.1). Ground-truth keys, the
+  first choice, leaked (below).
 - [ ] **P3 — the full schedule**, with the user's approval: the paper's two
   phases or a single 6x run of the chosen variant.
 
 ## Progress log
 
+- **2026-09-30 (random training keys fix the full model)** — With
+  `train_keys='random'`, one epoch, VID AP50: pixel-only **72.6** (fast 53.0,
+  medium 71.6, slow 78.7), up from 70.5; full **75.6** (56.4 / 74.6 / 82.1),
+  up from 71.5 -- now 3.5 above instance-only (72.1) and 9.6 above Faster
+  R-CNN, where the paper's full schedule has +0.9 and +9.2. Ground-truth keys
+  had leaked, as the training losses suggested. Random keys are now the
+  default. Next, with the user's approval: the full model on a full schedule.
 - **2026-09-30 (P2: the ablation at one epoch)** — Full val, VID AP50:
 
   | Variant | all | fast | medium | slow | vs baseline | paper, full schedule |

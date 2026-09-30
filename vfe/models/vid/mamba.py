@@ -82,17 +82,19 @@ class MambaPixelLevel(nn.Module):
             (``MPN``'s ``before_fpn``); ``'neck'`` enhances the neck's output.
             Either way the RPN and the RoI head see the enhanced map.
         stride: the map's stride in input pixels.
-        train_keys: ``'gt'`` takes ``pixels_per_box`` random pixels inside each
-            reference frame's ground-truth boxes (the test-time rule with
-            ground truth for detections); ``'random'`` takes ``random_keys``
-            random pixels of each reference frame (the released ``MPN``
-            configs). Training keys are capped at the memory's ``key_length``,
-            as test-time reads are.
+        train_keys: ``'random'`` takes ``random_keys`` random pixels of each
+            reference frame (the released ``MPN`` configs); ``'gt'`` takes
+            ``pixels_per_box`` random pixels inside each reference frame's
+            ground-truth boxes (the test-time rule with ground truth for
+            detections). ``'gt'`` leaks: on DET images the references are the
+            key image itself, and at one epoch it cost 2.1 AP50 alone and 4.1
+            in the full model (docs/mamba-pixel-plan.md). Training keys are
+            capped at the memory's ``key_length``, as test-time reads are.
         memory_cfg: keyword arguments for :class:`~vfe.models.memory.MemoryBank`.
     """
 
     def __init__(self, in_channels: int, num_attention_blocks: int = 16,
-                 position: str = "backbone", stride: int = 16, train_keys: str = "gt",
+                 position: str = "backbone", stride: int = 16, train_keys: str = "random",
                  random_keys: int = 2000, score_thr: float = 0.3, pixels_per_box: int = 100,
                  pixels_per_frame: int = 1000, fallback_pixels: int = 50,
                  memory_cfg: dict | None = None):

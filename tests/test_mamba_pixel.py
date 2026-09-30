@@ -111,7 +111,7 @@ def test_writes_keep_confident_detections_highest_first():
 def test_training_keys_from_ground_truth_or_at_random():
     feats = torch.randn(2, 8, 4, 8)
     ref_boxes = torch.tensor([[0.0, 8.0, 8.0, 40.0, 24.0]])  # reference 0 only
-    gt = level(stride=16, pixels_per_box=100, fallback_pixels=3)
+    gt = level(stride=16, train_keys="gt", pixels_per_box=100, fallback_pixels=3)
     keys = gt.training_keys(feats, ref_boxes)
     assert keys.shape == (6 + 3, 8)  # six cells in the box; three fallback pixels of ref 1
     rand = level(stride=16, train_keys="random", random_keys=5,
