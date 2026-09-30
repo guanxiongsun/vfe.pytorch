@@ -117,6 +117,33 @@ CONFIG=configs/vid/eovod/eovod_yolox_m_10e.py NAME=eovod_yolox_m_10e ACCUMULATE=
 
 ## Progress log
 
+- **2026-09-30 (stage B, first attempt: the detector drifted, the prior never
+  learned)** — One epoch from stage A (56.1), full val:
+
+  | Design | plain | LPN | LPN + SPN |
+  | :-- | --: | --: | --: |
+  | paper-text (the prior's cells on the PAFPN levels) | 51.1 | 51.1 / 70.7 / 57.5 | 49.8 / 68.7 / 56.1 |
+  | before the PAFPN | 52.0 | 52.0 / 71.5 / 58.1 | 50.8 / 69.8 / 56.8 |
+
+  Plain equals LPN to the last digit in both. Training the whole detector
+  for an epoch (batch 8, lr 1e-4, no EMA) cost it 4-5 AP, and the prior did
+  not learn to help. The before-PAFPN aggregators' zero-initialised output
+  projections reached norms of 0.06 and 0.22 (the other layers 10-15), so
+  they stayed nearly the identity; the paper-text design's zero
+  initialisation never applied, because `load_from` restored stage A's
+  untrained aggregator of the same name, and its prior engages on 94% of
+  frames yet moves AP by 0.3 on the timed videos. Second attempt (jobs
+  6961022, 6961026, each evaluated plain / LPN / LPN + SPN): the detector
+  frozen except the classification branch (`frozen_modules`), started from
+  `epoch_10_detector.pth` (stage A without aggregators or EMA buffers), the
+  aggregators learning at 1e-2.
+
+  Speed on one GH200, batch 1 (`tools/eovod_speed.py`, 8 videos): YOLOX-M
+  alone 41.8 FPS eager (23.3 ms: backbone and PAFPN 18.6, head 5.9) and 199
+  FPS with the fast engine (4.8 ms). The before-PAFPN stage-B model: LPN
+  35.4 FPS eager / 122 fast (aggregation 1.8 ms); with SPN 36.6 / 128.5,
+  running 1.37 of 3 levels on average -- and dropping 3.5 AP on those videos,
+  where the paper's YOLOX SPN costs 0.6.
 - **2026-09-30 (stage A at 10 epochs; stage B submitted)** — YOLOX-M alone,
   10 epochs from COCO (job 6955929, 1 h 20 min on 4 GH200s, 0.14 s per step
   of 32 images): full val **56.1 / 75.7 / 62.5** (APs / APm / APl 13.1 /
