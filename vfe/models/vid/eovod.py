@@ -271,7 +271,9 @@ class EOVOD(BaseVideoDetector):
             FPN's outputs; ``'backbone'`` the backbone's, before the FPN (the
             released code's model), with one aggregator per level at the
             backbone's widths and strides ``backbone_strides``. ``levels``:
-            the levels aggregated (default: all).
+            the levels aggregated (default: all). ``zero_init`` starts each
+            aggregator's output projection at zero, so aggregation begins as
+            the identity -- for training it onto an already-trained detector.
         ref_chunk_size: reference frames detected at once when gathering the
             key set at a video's first frame (bounds peak memory).
         freeze_norm: keep every BatchNorm of the detector in eval mode while
@@ -360,7 +362,7 @@ class EOVOD(BaseVideoDetector):
         aggregator = _with_defaults(
             "aggregator", aggregator,
             dict(num_heads=16, shared=True, query_chunk=1024, branches="all", position="fpn",
-                 levels=None, backbone_strides=(4, 8, 16, 32)),
+                 levels=None, backbone_strides=(4, 8, 16, 32), zero_init=False),
         )
         if aggregator["branches"] not in ("all", "cls"):
             raise ValueError("aggregator.branches must be 'all' or 'cls'")
@@ -401,6 +403,11 @@ class EOVOD(BaseVideoDetector):
                 PixelAggregator(c, aggregator["num_heads"]) if lvl in self.agg_levels
                 else nn.Identity() for lvl, c in enumerate(channels)
             )
+        if aggregator["zero_init"]:
+            for agg in self.aggregators:
+                if isinstance(agg, PixelAggregator):
+                    nn.init.zeros_(agg.fc.weight)
+                    nn.init.zeros_(agg.fc.bias)
 
         memory = _with_defaults(
             "memory", memory,

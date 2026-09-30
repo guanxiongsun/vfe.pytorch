@@ -1,14 +1,20 @@
 # Stage B of EOVOD on YOLOX-M: the location prior's training, from the stage-A
 # model (pass it with --load-from: a YOLOX-M trained alone by
 # eovod_yolox_m_10e.py or _80e.py). Video clips of a key frame and two support
-# frames, letterboxed to 640, with the FCOS work's training prior and schedule
-# (eovod_fcos_r50_fpn_3x.py): 3 epochs at batch 8, lr 1e-3 then 1e-4 after the
-# second. EOVOD trains one key frame per GPU, too few for YOLOX's batch
-# statistics, so every BatchNorm keeps the stage-A statistics (freeze_norm);
-# that also allows gradient accumulation (4 GPUs x 2 = batch 8).
+# frames, letterboxed to 640, with the FCOS work's training prior and the
+# paper-text design of its default recipe (eovod_fcos_r50_fpn_3x.py: the prior's
+# cells aggregated on the FPN's levels, classification tower only). EOVOD trains
+# one key frame per GPU, too few for YOLOX's batch statistics, so every
+# BatchNorm keeps the stage-A statistics (freeze_norm); that also allows
+# gradient accumulation (4 GPUs x 2 = batch 8).
+#
+# Onto a trained detector: the aggregators' output projections start at zero
+# (aggregation begins as the identity, the model at stage A's accuracy), and
+# learn at 1e-3 while the detector continues at 1e-4 (stage A ended at 5e-5);
+# 3 epochs, the rates falling tenfold after the second.
 _base_ = ['./eovod_yolox_m_80e.py']
 
-model = dict(freeze_norm=True)
+model = dict(freeze_norm=True, aggregator=dict(zero_init=True))
 
 pad_val = dict(img=(114.0, 114.0, 114.0))
 img_scale = (640, 640)
@@ -55,11 +61,13 @@ data = dict(
 optimizer = dict(
     _delete_=True,
     type='SGD',
-    lr=0.001,
+    lr=0.0001,
     momentum=0.9,
     weight_decay=5e-4,
     nesterov=True,
-    paramwise_cfg=dict(norm_decay_mult=0., bias_decay_mult=0.))
+    paramwise_cfg=dict(
+        norm_decay_mult=0., bias_decay_mult=0.,
+        custom_keys={'aggregators': dict(lr_mult=10.)}))
 optimizer_config = dict(_delete_=True, grad_clip=dict(max_norm=35, norm_type=2))
 lr_config = dict(
     _delete_=True,

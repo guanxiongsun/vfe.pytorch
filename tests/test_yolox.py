@@ -355,16 +355,25 @@ def test_freeze_norm_keeps_batch_statistics_while_training():
     assert torch.equal(norms[0].running_mean, before)
 
 
-@pytest.mark.parametrize("config", ["eovod_yolox_m_80e.py", "eovod_yolox_m_10e.py",
-                                    "eovod_yolox_m_lpn_3e.py"])
-def test_yolox_configs_build(config):
+@pytest.mark.parametrize("config, total", [
+    # YOLOX-M with 30 classes (25,326,495 with COCO's 80), and one aggregator
+    # of 192 channels ...
+    ("eovod_yolox_m_80e.py", 25_445_769),
+    ("eovod_yolox_m_10e.py", 25_445_769),
+    ("eovod_yolox_m_lpn_3e.py", 25_445_769),
+    # ... or two, on the backbone's 384- and 768-channel maps.
+    ("eovod_yolox_m_lpn_3e_backbone.py", 25_297_545 + 4 * (384 * 384 + 384 + 768 * 768 + 768)),
+])
+def test_yolox_configs_build(config, total):
     cfg = Config.fromfile(REPO_ROOT / "configs/vid/eovod" / config)
     model = build_model(cfg.model)
     assert type(model.detector).__name__ == "YOLOX"
-    # YOLOX-M with 30 classes (25,326,495 with COCO's 80), and one aggregator
-    # of 192 channels.
-    assert sum(p.numel() for p in model.parameters()) == 25_445_769
-    assert model.freeze_norm == (config == "eovod_yolox_m_lpn_3e.py")
+    assert sum(p.numel() for p in model.parameters()) == total
+    stage_b = "lpn" in config
+    assert model.freeze_norm == stage_b
+    if stage_b:  # zero-initialised aggregation
+        assert all(agg.fc.weight.abs().sum() == 0 for agg in model.aggregators
+                   if hasattr(agg, "fc"))
 
 
 def test_training_from_loaded_weights_starts_the_average_there(tmp_path):
@@ -388,3 +397,60 @@ def test_training_from_loaded_weights_starts_the_average_there(tmp_path):
                    distributed=False, validate=False, max_epochs=1, max_iters_per_epoch=1,
                    load_from=str(tmp_path / "init.pth"))
     assert torch.allclose(model.state_dict()[name], loaded.state_dict()[name], atol=1e-6)
+
+
+def test_zero_initialised_aggregation_starts_as_the_identity():
+    """With zero_init, a video's detections equal plain detection until the
+    aggregators learn; and the projection still receives a gradient."""
+    model = tiny_eovod(aggregator=dict(num_heads=4, shared=True, branches="cls", zero_init=True),
+                       location_prior=dict(score_thr=0.0), size_prior=None).eval()
+    plain = tiny_eovod(location_prior=dict(score_thr=2.0), size_prior=None).eval()
+    plain.load_state_dict(model.state_dict())
+    refs = torch.randn(1, 3, 3, 128, 160)
+    frames = torch.randn(3, 1, 3, 128, 160)
+    with torch.no_grad():
+        for net in (model, plain):
+            net.simple_test(frames[0], [meta(0)], ref_img=[refs],
+                            ref_img_metas=[[[meta(0), meta(4), meta(8)]]])
+        for fid in (1, 2):
+            out = model.simple_test(frames[fid], [meta(fid)])
+            ref = plain.simple_test(frames[fid], [meta(fid)])
+            assert all(np.array_equal(a, b) for a, b in zip(out[0], ref[0], strict=True))
+    assert model._prev_boxes is not None and len(model._prev_boxes)  # the prior engaged
+    model.train()
+    losses = model.forward_train(
+        torch.randn(1, 3, 128, 160), [meta()], *[x[:1] for x in gts()],
+        ref_img=torch.randn(1, 2, 3, 128, 160), ref_img_metas=[[meta(1), meta(2)]],
+        ref_gt_bboxes=[torch.tensor([[0.0, 12.0, 14.0, 72.0, 88.0]])])
+    sum(losses.values()).backward()
+    assert model.aggregators[0].fc.weight.grad.abs().sum() > 0
+
+
+def test_before_the_pafpn_design_trains_and_runs_a_video():
+    """Stage B's second design on YOLOX: the backbone's stride-16 and -32 maps
+    aggregated before the PAFPN, every pixel a query, a memory bank, the
+    classification branch only (the PAFPN runs twice)."""
+    model = tiny_eovod(
+        aggregator=dict(num_heads=4, position="backbone", levels=[1, 2], shared=False,
+                        branches="cls", backbone_strides=(8, 16, 32), zero_init=True),
+        location_prior=dict(queries="all", train_keys="random", train_random_keys=50,
+                            train_plain_prob=0.0, score_thr=0.0),
+        memory=dict(update=True, capacity=500, num_keys=100, write_per_frame=50),
+        size_prior=dict(interval=2))
+    assert [type(a).__name__ for a in model.aggregators] == ["Identity", "PixelAggregator",
+                                                            "PixelAggregator"]
+    model.train()
+    losses = model.forward_train(torch.randn(1, 3, 128, 160), [meta()], *[x[:1] for x in gts()],
+                                 ref_img=torch.randn(1, 2, 3, 128, 160),
+                                 ref_img_metas=[[meta(1), meta(2)]],
+                                 ref_gt_bboxes=[torch.zeros(0, 5)])
+    sum(losses.values()).backward()
+    assert all(model.aggregators[i].fc.weight.grad is not None for i in (1, 2))
+    model.eval()
+    with torch.no_grad():
+        model.simple_test(torch.randn(1, 3, 128, 160), [meta(0)],
+                          ref_img=[torch.randn(1, 3, 3, 128, 160)],
+                          ref_img_metas=[[[meta(0), meta(4), meta(8)]]])
+        for fid in (1, 2, 3):
+            out = model.simple_test(torch.randn(1, 3, 128, 160), [meta(fid)], rescale=True)
+    assert len(out[0]) == 30 and model.memory.sizes()[1] > 0
