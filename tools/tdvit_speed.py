@@ -15,6 +15,10 @@ config:
     python tools/tdvit_speed.py configs/vid/tdvit/frcnn_swint_fpn_3x.py \\
         configs/vid/tdvit/tdvit_t_frcnn_fpn_3x.py [--ckpts A.pth B.pth] --out speed.json
 
+A config may carry its own overrides, URL-style:
+``configs/vid/tdvit/tdvit_t_frcnn_fpn_3x.py?model.detector.backbone.attention=joint``
+(several joined by ``&``), applied after ``--cfg-options``.
+
 Without checkpoints the models keep their initial weights: the backbone's
 time does not depend on them, the RoI head's barely (300 proposals a frame).
 """
@@ -114,8 +118,10 @@ def main() -> None:
                "frames_per_video": args.frames, "models": {}}
     videos = None
     for k, path in enumerate(args.configs):
-        cfg = Config.fromfile(path)
+        file, _, query = path.partition("?")
+        cfg = Config.fromfile(file)
         cfg.merge_from_dict(parse_cfg_options(args.cfg_options))
+        cfg.merge_from_dict(parse_cfg_options([o for o in query.split("&") if o]))
         if videos is None:
             videos = load_frames(cfg, args.videos, args.frames, device)
         cfg.model.detector.backbone.init_cfg = None  # timing needs no pretrained download

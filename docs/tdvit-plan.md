@@ -22,10 +22,12 @@
 - Implemented and unit-tested: the backbone, the detector (Faster R-CNN and
   SELSA), the per-stage reference sampling, crops shared by a clip, the
   Table 2 and Table 3 configs, and a speed tool.
-- Training on Isambard: the Swin-T baseline and TDViT-T, 3 epochs each
-  (T3, in progress). After one epoch TDViT-T is 3.5 AP *below* Swin-T: its
-  test-time references lie farther back than its training references, and
-  fast objects suffer (Progress log). A fix is being tested.
+- The paper's block, implemented as the authors' code has it, trails a
+  Swin-T trained the same way (3 epochs: 46.0 against 50.2 AP): it gives up
+  the frame's own spatial attention in half of TDViT-T's blocks. With one
+  change -- *joint* attention over the frame's window and the reference's --
+  TDViT-T leads Swin-T (epoch 1: 42.0 against 41.0 AP). 3-epoch runs and the
+  other variants are in progress (Progress log).
 
 ## The paper
 
@@ -210,6 +212,53 @@ run of the real config's pipelines on synthetic JPEGs feeds the detector.
 - [ ] **T8 -- S and B** (ImageNet Swin-S/B weights), if wanted.
 
 ## Progress log
+
+- **2026-10-01 (joint attention works)** — One epoch each, evaluated with the
+  paper's test protocol (temporal earliest, references held `D_t` frames):
+
+  | Epoch 1 | AP | AP50 | AP75 | VID AP50 | fast | medium | slow |
+  | :-- | --: | --: | --: | --: | --: | --: | --: |
+  | Swin-T | 41.0 | 73.1 | 42.4 | 73.6 | 51.4 | 73.1 | 81.1 |
+  | TDViT-T, the paper's block | 37.5 | 69.9 | 36.6 | 70.4 | 42.0 | 69.1 | 79.8 |
+  | TDViT-T, joint attention | **42.0** | 74.6 | **43.9** | 75.1 | 51.4 | 75.1 | **82.7** |
+  | the same, + temporal bias | 41.5 | **74.7** | 42.4 | **75.3** | 51.5 | 75.2 | 82.6 |
+  | the same, + bias, past references | 41.9 | 74.5 | 43.2 | 75.1 | **52.0** | **75.3** | 82.5 |
+
+  Joint attention turns TDViT-T from 3.5 AP behind Swin-T to 1.0 ahead
+  (+1.5 AP50, +1.5 VID AP50): fast objects are no longer hurt, medium and
+  slow ones gain about two points. The temporal bias and the past references
+  make no difference worth their complexity, so the design kept is the
+  paper's with one change -- a TDTB attends over its own window and the
+  reference's -- and TDViT-T stays exactly Swin-T's size
+  (`tdvit_t_joint_frcnn_fpn_3x.py`). Its speed is Swin-T's (25.8 ms a frame
+  on a GH200, untrained weights). Submitted: the joint run resumed to 3
+  epochs (7003775), TDViT-T+ and SELSA + TDViT-T with joint attention at one
+  epoch (7003777, 7003779), SELSA + Swin-T's epoch 1 evaluated (7003781), and
+  the joint checkpoint with its memory off and with near references
+  (7003782, 7003783).
+
+- **2026-10-01 (three epochs; a stronger baseline than the paper's)** — The
+  3-epoch checkpoints, evaluated apart (full val):
+
+  | | AP | AP50 | AP75 | VID AP50 | fast | medium | slow |
+  | :-- | --: | --: | --: | --: | --: | --: | --: |
+  | Swin-T | **50.2** | **79.0** | **55.4** | **79.5** | 57.3 | 78.8 | 85.7 |
+  | TDViT-T, the paper's protocol | 46.0 | 75.7 | 49.4 | 76.2 | 51.1 | 75.2 | 83.8 |
+  | TDViT-T, memory off | 48.2 | 76.8 | 52.8 | 77.2 | 55.3 | 76.6 | 83.2 |
+  | TDViT-T, references 1 / 2 / 4 / 8 back | 49.0 | 78.0 | 53.8 | 78.5 | 56.4 | 78.3 | 84.1 |
+  | *the paper: Swin-T* | *47.1* | *77.2* | *51.5* | | | | |
+  | *the paper: TDViT-T* | *49.1* | *78.5* | *52.7* | | | | |
+
+  TDViT-T with near references lands on the paper's TDViT-T; the Swin-T
+  baseline trained the same way is 3.1 AP above the paper's Swin-T. So the
+  paper's Swin-T was probably trained more weakly -- v1's Swin-T VID config,
+  for one, resized to 600 and flipped, nothing more, where TDViT followed
+  Swin's multi-scale and crop augmentation. Under test: Swin-T with v1's
+  pipeline, 3 epochs (`frcnn_swint_fpn_3x_v1aug.py`, 7002832). Meanwhile the
+  running losses of the joint-attention runs, on the same samples, drop
+  *below* Swin-T's (iterations 3,000-6,000: joint 0.2204, Swin-T 0.2231, the
+  paper's block 0.2264): with joint attention the other frame helps the
+  network fit.
 
 - **2026-10-01 (the block, not only the protocol)** — Two more findings.
   The test-matched references (past, at the test's distances) lift TDViT-T
