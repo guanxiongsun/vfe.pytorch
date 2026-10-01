@@ -55,6 +55,16 @@ confirmed with a second seed.
 > throughout — halves the steps in epochs 1–3 and scores 83.16. The 84.06 above
 > follows the published model's own schedule.
 
+> **MAMBA's pixel level.** The released model is the paper's instance-level
+> variant (Table 3, "Ours_ins": 83.7), which the numbers above reproduce. The
+> paper's full model also enhances the feature map before the RPN, and that
+> pixel level was never released
+> ([#4](https://github.com/guanxiongsun/vfe.pytorch/issues/4)). It is now
+> implemented: [`mamba_full_r101_dc5_3x.py`](configs/vid/mamba/mamba_full_r101_dc5_3x.py).
+> After one epoch it scores 75.6 AP50 against 72.1 for the instance level
+> alone ([docs/mamba-pixel-plan.md](docs/mamba-pixel-plan.md)). There is no
+> full-schedule checkpoint of it yet.
+
 ## Install
 
 ```bash
