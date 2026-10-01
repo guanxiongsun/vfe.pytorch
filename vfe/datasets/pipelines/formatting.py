@@ -181,6 +181,10 @@ class SeqDefaultFormatBundle:
     def _format(self, results: dict) -> dict:
         if "img" in results:
             img = results["img"]
+            if img.dtype == np.uint8:
+                # mmdet's DefaultFormatBundle(img_to_float=True), under which
+                # mmtrack's ran; the normalised pipelines are float already.
+                img = img.astype(np.float32)
             if len(img.shape) == 3:
                 img = np.ascontiguousarray(img.transpose(2, 0, 1))
             else:

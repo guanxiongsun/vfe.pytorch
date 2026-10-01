@@ -46,6 +46,12 @@ class MultiImageMixDataset:
     ``results['mix_results']``. ``update_skip_type_keys`` switches transforms
     off by type, as YOLOX does for its last epochs.
 
+    The items may be clips (lists of frames, from a dataset sampling reference
+    frames): the other clips then ride on the first frame's ``mix_results``,
+    and :class:`~vfe.datasets.pipelines.mix.SeqShared` hands each frame the
+    other clips' frame at the same position. A ``SeqShared`` transform is
+    skipped by its inner transform's type.
+
     ``dataset`` may be a config (or a list of them), built here.
     """
 
@@ -61,7 +67,10 @@ class MultiImageMixDataset:
         for transform in pipeline:
             if not isinstance(transform, dict):
                 raise TypeError("pipeline must be a list of dicts")
-            self.pipeline_types.append(transform["type"])
+            kind = transform["type"]
+            if kind == "SeqShared":
+                kind = transform["transform"]["type"]
+            self.pipeline_types.append(kind)
             self.pipeline.append(build_from_cfg(transform, PIPELINES))
         self.dataset = dataset
         self.CLASSES = dataset.CLASSES
@@ -77,17 +86,20 @@ class MultiImageMixDataset:
         for transform, transform_type in zip(self.pipeline, self.pipeline_types, strict=True):
             if self._skip_type_keys is not None and transform_type in self._skip_type_keys:
                 continue
-            if hasattr(transform, "get_indexes"):
-                indexes = transform.get_indexes(self.dataset)
+            get_indexes = getattr(transform, "get_indexes", None)
+            indexes = get_indexes(self.dataset) if get_indexes is not None else None
+            if indexes is not None:
                 if not isinstance(indexes, collections.abc.Sequence):
                     indexes = [indexes]
-                results["mix_results"] = [copy.deepcopy(self.dataset[i]) for i in indexes]
+                mixes = [copy.deepcopy(self.dataset[i]) for i in indexes]
+                (results[0] if isinstance(results, list) else results)["mix_results"] = mixes
             results = transform(results)
             if results is None:
                 # A transform dropped the sample (FilterAnnotations with
                 # keep_empty): draw another, as the wrapped datasets do.
                 return self[np.random.randint(len(self))]
-            results.pop("mix_results", None)
+            for frame in results if isinstance(results, list) else [results]:
+                frame.pop("mix_results", None)
         return results
 
     def update_skip_type_keys(self, skip_type_keys) -> None:

@@ -26,7 +26,7 @@ from .loading import (
     LoadMultiImagesFromFile,
     SeqLoadAnnotations,
 )
-from .mix import FilterAnnotations, MixUp, Mosaic, RandomAffine, YOLOXHSVRandomAug
+from .mix import FilterAnnotations, MixUp, Mosaic, RandomAffine, SeqShared, YOLOXHSVRandomAug
 from .transforms import (
     Normalize,
     Pad,
@@ -73,6 +73,7 @@ __all__ = [
     "MixUp",
     "YOLOXHSVRandomAug",
     "FilterAnnotations",
+    "SeqShared",
 ]
 
 

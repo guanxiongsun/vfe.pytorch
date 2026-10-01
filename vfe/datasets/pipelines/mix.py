@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import copy
 import math
+import random as py_random
 
 import cv2
 import numpy as np
@@ -24,9 +25,10 @@ from numpy import random
 
 from vfe.datasets.builder import PIPELINES
 from vfe.datasets.pipelines.image import imresize
+from vfe.registry import build_from_cfg
 
 __all__ = ["find_inside_bboxes", "Mosaic", "RandomAffine", "MixUp", "YOLOXHSVRandomAug",
-           "FilterAnnotations"]
+           "FilterAnnotations", "SeqShared"]
 
 
 def find_inside_bboxes(bboxes: np.ndarray, img_h: float, img_w: float) -> np.ndarray:
@@ -361,3 +363,42 @@ class FilterAnnotations:
             if key in results:
                 results[key] = results[key][keep]
         return results
+
+
+@PIPELINES.register_module()
+class SeqShared:
+    """One single-image transform applied to every frame of a clip with the
+    same random draws: each frame starts from the random state the first one
+    started from, so a key frame and its support frames get the same mosaic
+    layout, warp, mixed-in clip, colour shift, flip and size -- every pixel
+    keeps its previous frames, which a mosaic of single images would not.
+
+    For a transform that mixes in other items (``get_indexes``), the other
+    clips arrive on the first frame's ``mix_results``
+    (:class:`~vfe.datasets.dataset_wrappers.MultiImageMixDataset`), and frame
+    ``t`` receives each one's frame ``t``. Frames of a clip share their size,
+    which keeps the draws that depend on sizes (MixUp's crop) the same.
+    """
+
+    def __init__(self, transform: dict):
+        self.transform = build_from_cfg(transform, PIPELINES)
+
+    def get_indexes(self, dataset):
+        get_indexes = getattr(self.transform, "get_indexes", None)
+        return None if get_indexes is None else get_indexes(dataset)
+
+    def __call__(self, clip: list[dict]):
+        mixes = clip[0].pop("mix_results", None)
+        np_state, py_state = np.random.get_state(), py_random.getstate()
+        outs = []
+        for t, frame in enumerate(clip):
+            np.random.set_state(np_state)
+            py_random.setstate(py_state)
+            if mixes is not None:
+                frame["mix_results"] = [other[t] for other in mixes]
+            out = self.transform(frame)
+            if out is None:
+                return None
+            out.pop("mix_results", None)
+            outs.append(out)
+        return outs
