@@ -10,6 +10,52 @@
   FCOS was checked; train YOLOX-M with the paper's recipe; then train the
   location prior on top, reusing the FCOS work's recipe where it applies.
 
+## Status (2026-10-01): concluded
+
+- **The port is exact.** YOLOX matches mmdet 2.19.1 to 2.3e-13 in float64
+  (forward passes, decoding, SimOTA's targets, every gradient), its training
+  pipeline matches bit for bit (128 / 128), and the official COCO YOLOX-M loads
+  with all 606 tensors (*The port*, below).
+- **YOLOX-M alone is far stronger than the paper's.** From the COCO weights,
+  with the paper's recipe cut to 10 epochs: **56.1 / 75.7 / 62.5**, against
+  the paper's YOLOX-M at 49.4 (and its YOLOX-M + LPN at 53.3). The paper does
+  not say how its YOLOX was initialised; COCO is the likely difference.
+- **The location prior on YOLOX** (full val, AP):
+
+  | How the prior was trained | without it | with LPN | gain | LPN + SPN |
+  | :-- | --: | --: | --: | --: |
+  | added to the finished model (detector frozen but for classification) | 56.0 | 56.0 | 0.0 | 55.1 |
+  | with the detector, on clips without Mosaic, 1 epoch | 41.5 | 43.2 | +1.7 | 42.3 |
+  | with the detector, YOLOX's full recipe on clips, 10 epochs | 55.5 | **56.1** | **+0.6** | 55.4 |
+
+  The prior helps when it trains with the detector, and helps less the
+  stronger the detector: +4.2 AP on FCOS (from 49.8), the paper's +3.9 on its
+  YOLOX-M (from 49.4), +1.7 on a 41.5 YOLOX, +0.6 on a 55.5 one (APs +1.7,
+  APl +0.8, nothing on fast motion). The size prior costs 0.7-0.9 AP on
+  YOLOX; with the full recipe that is more than the location prior adds.
+  Single runs: the +0.6 is within what a second seed might move.
+- **Speed** on one GH200 at batch 1 (`tools/eovod_speed.py`, the final model,
+  8 videos):
+
+  | | eager FPS | fast engine FPS | AP on the 8 videos |
+  | :-- | --: | --: | --: |
+  | no aggregation | 46-49 | 181-184 | 52.1 |
+  | LPN | 38.8 | 120 | 52.7 |
+  | LPN + SPN | 44.1 | 130 | 47.3 |
+
+  The paper (V100): 39.7 / 35.8 / 50.5 FPS, so its LPN + SPN is 27% faster
+  than YOLOX-M alone. Here it is 5-10% slower eager and 28-29% slower with the
+  fast engine: the backbone and PAFPN take 15.9-17.6 ms of an eager frame and
+  the head only 3.7-4.1 ms, so running 1.38 of the 3 head levels saves 1.5
+  ms while the aggregation and its bookkeeping add 2.9. On these videos the
+  size prior also costs 5.3 AP (the paper: 0.6 on val).
+- **Not done:** the paper's 80 epochs (at 10, YOLOX-M alone is already above
+  the paper's YOLOX-M + LPN) and a second seed of the last comparison.
+- **What carries over:** `SeqShared` with clip-aware `MultiImageMixDataset`
+  (a still-image recipe with Mosaic and MixUp, applied to clips with the same
+  random draws per clip) and batched clip training in EOVOD (BatchNorm can
+  train; one key frame per GPU is unchanged, bit for bit).
+
 ## The paper
 
 Table 3 and Table 5 (COCO-style AP on VID val, V100 FPS; Table 5 labels the
@@ -98,7 +144,7 @@ checkpoint layout serve both stages and the evaluation.
 - [x] **Y3 — the COCO weights**, converted and checked.
 - [x] **Y4 — stage A at 10 epochs**: YOLOX-M alone, **56.1 / 75.7 / 62.5**
   on the full val set -- above the paper's YOLOX-M at 80 epochs (49.4) and
-  its + LPN (53.3). The 80-epoch run awaits the user's decision.
+  its + LPN (53.3). The 80-epoch run was not needed and not run.
 - [x] **Y5 — the prior on YOLOX**: added to the finished stage-A model it
   gains nothing; trained jointly on clips without Mosaic +1.7 AP (41.5 ->
   43.2); with YOLOX's full recipe on clips (`SeqShared`) +0.6 (55.5 -> 56.1),
@@ -118,6 +164,14 @@ CONFIG=configs/vid/eovod/eovod_yolox_m_10e.py NAME=eovod_yolox_m_10e ACCUMULATE=
 
 ## Progress log
 
+- **2026-10-01 (speed of the final model; the YOLOX work stops here)** — The
+  clip-recipe model with the prior (job 6990037,
+  `/projects/b5cs/vfe/speed/speed_yolox_m_clips_10e.json`), eager / fast
+  engine, ms per frame after the first: plain 19.9-21.1 / 5.2-5.3, LPN 25.3 /
+  8.1, LPN + SPN 22.2 / 7.4 (1.38 levels, aggregation 1.65 ms). Eager
+  breakdown, plain against LPN + SPN: backbone and PAFPN 16.5 in both, head
+  3.9 -> 2.4, aggregation and the rest 0.5 -> 3.4. The findings are in
+  *Status* above.
 - **2026-10-01 (the full recipe with the prior: +0.6 AP)** — 10 epochs from
   COCO at batch 32, YOLOX's recipe on clips (jobs 6985198 / 6985201), full val:
 
@@ -129,7 +183,7 @@ CONFIG=configs/vid/eovod/eovod_yolox_m_10e.py NAME=eovod_yolox_m_10e ACCUMULATE=
   | stage A (still images) | 56.1 | 75.7 | 62.5 | 13.1 / 28.7 / 62.5 | 76.2 | 51.3 |
 
   The clip recipe trains a full-strength YOLOX (the control is 0.6 AP below
-  stage A), and the prior adds 0.6 AP to it -- most of it on small objects
+  stage A), and the prior adds 0.6 AP to it -- the most on small objects
   (+1.7 APs), none on fast motion -- where training without Mosaic it added
   1.7 to a 41.5 model. The size prior gives that back (55.4). On FCOS the prior
   added 4.2 AP to a 49.8 model, and the paper's YOLOX-M gains 3.9 from 49.4:
