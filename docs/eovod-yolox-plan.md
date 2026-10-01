@@ -99,9 +99,10 @@ checkpoint layout serve both stages and the evaluation.
 - [x] **Y4 — stage A at 10 epochs**: YOLOX-M alone, **56.1 / 75.7 / 62.5**
   on the full val set -- above the paper's YOLOX-M at 80 epochs (49.4) and
   its + LPN (53.3). The 80-epoch run awaits the user's decision.
-- [ ] **Y5 — stage B**: the location prior on YOLOX (frozen BatchNorm, video
-  clips at 640, zero-initialised aggregation), two designs at one epoch, then
-  LPN and LPN + SPN evaluations and speed.
+- [x] **Y5 — the prior on YOLOX**: added to the finished stage-A model it
+  gains nothing; trained jointly on clips without Mosaic +1.7 AP (41.5 ->
+  43.2); with YOLOX's full recipe on clips (`SeqShared`) +0.6 (55.5 -> 56.1),
+  and LPN + SPN 55.4.
 
 ## Running it
 
@@ -117,6 +118,23 @@ CONFIG=configs/vid/eovod/eovod_yolox_m_10e.py NAME=eovod_yolox_m_10e ACCUMULATE=
 
 ## Progress log
 
+- **2026-10-01 (the full recipe with the prior: +0.6 AP)** — 10 epochs from
+  COCO at batch 32, YOLOX's recipe on clips (jobs 6985198 / 6985201), full val:
+
+  | | AP | AP50 | AP75 | APs / APm / APl | VID AP50 | fast |
+  | :-- | --: | --: | --: | :-: | --: | --: |
+  | control (every step plain) | 55.5 | 75.1 | 61.6 | 13.2 / 29.1 / 61.6 | 75.6 | 53.3 |
+  | with the prior, LPN | **56.1** | 75.8 | 62.3 | 14.9 / 28.8 / 62.4 | 76.3 | 53.2 |
+  | with the prior, LPN + SPN | 55.4 | 74.7 | 61.6 | 15.0 / 28.5 / 61.7 | 75.1 | 52.2 |
+  | stage A (still images) | 56.1 | 75.7 | 62.5 | 13.1 / 28.7 / 62.5 | 76.2 | 51.3 |
+
+  The clip recipe trains a full-strength YOLOX (the control is 0.6 AP below
+  stage A), and the prior adds 0.6 AP to it -- most of it on small objects
+  (+1.7 APs), none on fast motion -- where training without Mosaic it added
+  1.7 to a 41.5 model. The size prior gives that back (55.4). On FCOS the prior
+  added 4.2 AP to a 49.8 model, and the paper's YOLOX-M gains 3.9 from 49.4:
+  on a YOLOX-M this strong, the prior helps little. Single runs; the 0.6 is
+  within what a second seed might move.
 - **2026-10-01 (YOLOX's recipe on clips, with the prior)** — To have stage A's
   detector and the prior's gain at once, the stage-A recipe now runs on clips.
   `SeqShared` applies each single-image transform to all three frames of a
