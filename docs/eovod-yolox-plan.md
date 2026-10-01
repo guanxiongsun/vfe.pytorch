@@ -117,6 +117,18 @@ CONFIG=configs/vid/eovod/eovod_yolox_m_10e.py NAME=eovod_yolox_m_10e ACCUMULATE=
 
 ## Progress log
 
+- **2026-10-01 (YOLOX's recipe on clips, with the prior)** — To have stage A's
+  detector and the prior's gain at once, the stage-A recipe now runs on clips.
+  `SeqShared` applies each single-image transform to all three frames of a
+  clip with the same random draws (the same mosaic layout, warp, mixed-in clip,
+  colour, flip and size), so every pixel keeps its previous frames;
+  `MultiImageMixDataset` mixes whole clips. EOVOD trains on batches of clips,
+  so BatchNorm trains as in stage A (one key frame per GPU trains exactly as
+  before, checked on losses, gradients and the random stream), and
+  `clip_multiscale` applies YOLOX's multi-scale step to whole clips.
+  `eovod_yolox_m_clips_10e.py` (the before-PAFPN prior) against
+  `_plain.py` (every step plain), 10 epochs from COCO at batch 32: a 1-GPU
+  smoke 6985197, then trainings 6985198 / 6985201 and their evaluations.
 - **2026-10-01 (joint training: the prior helps YOLOX)** — YOLOX-M trained with
   the before-PAFPN prior from the COCO weights on video clips, against the same
   training with every step plain; one epoch each, the detector at 1e-4 and the
