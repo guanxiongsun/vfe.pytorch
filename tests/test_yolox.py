@@ -366,17 +366,25 @@ def test_freeze_norm_keeps_batch_statistics_while_training():
     ("eovod_yolox_m_lpn_cls_3e.py", 25_445_769),
     ("eovod_yolox_m_lpn_cls_3e_backbone.py",
      25_297_545 + 4 * (384 * 384 + 384 + 768 * 768 + 768)),
+    ("eovod_yolox_m_joint_3e_backbone.py", 25_297_545 + 4 * (384 * 384 + 384 + 768 * 768 + 768)),
+    ("eovod_yolox_m_joint_3e_plain.py", 25_297_545 + 4 * (384 * 384 + 384 + 768 * 768 + 768)),
 ])
 def test_yolox_configs_build(config, total):
     cfg = Config.fromfile(REPO_ROOT / "configs/vid/eovod" / config)
     model = build_model(cfg.model)
     assert type(model.detector).__name__ == "YOLOX"
     assert sum(p.numel() for p in model.parameters()) == total
-    stage_b = "lpn" in config
-    assert model.freeze_norm == stage_b
-    if stage_b:  # zero-initialised aggregation
-        assert all(agg.fc.weight.abs().sum() == 0 for agg in model.aggregators
-                   if hasattr(agg, "fc"))
+    stage_b, joint = "lpn" in config, "joint" in config
+    assert model.freeze_norm == (stage_b or joint)
+    zero = [bool(agg.fc.weight.abs().sum() == 0) for agg in model.aggregators
+            if hasattr(agg, "fc")]
+    if stage_b:  # zero-initialised aggregation onto a trained detector
+        assert all(zero)
+    if joint:  # trained together from the start
+        assert not any(zero)
+        cfg_opt = cfg.optimizer
+        assert cfg_opt.lr == 0.001 and "custom_keys" not in cfg_opt.paramwise_cfg
+        assert model.train_plain_prob == (1.0 if config.endswith("plain.py") else 0.0)
     frozen_backbone = not any(p.requires_grad for p in model.detector.backbone.parameters())
     assert frozen_backbone == ("lpn_cls" in config)
 
