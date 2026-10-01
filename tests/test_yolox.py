@@ -383,7 +383,8 @@ def test_yolox_configs_build(config, total):
     if joint:  # trained together from the start
         assert not any(zero)
         cfg_opt = cfg.optimizer
-        assert cfg_opt.lr == 0.001 and "custom_keys" not in cfg_opt.paramwise_cfg
+        assert cfg_opt.lr == 0.0001
+        assert cfg_opt.paramwise_cfg.custom_keys == {"aggregators": {"lr_mult": 10.0}}
         assert model.train_plain_prob == (1.0 if config.endswith("plain.py") else 0.0)
     frozen_backbone = not any(p.requires_grad for p in model.detector.backbone.parameters())
     assert frozen_backbone == ("lpn_cls" in config)
