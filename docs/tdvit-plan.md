@@ -211,6 +211,33 @@ run of the real config's pipelines on synthetic JPEGs feeds the detector.
 
 ## Progress log
 
+- **2026-10-01 (the block, not only the protocol)** — Two more findings.
+  The test-matched references (past, at the test's distances) lift TDViT-T
+  at epoch 1 from 37.5 to 38.8 AP (fast 42.0 to 45.6), still under memory
+  off (40.1) and Swin-T (41.0). And on the same samples (one seed), TDViT-T
+  *trains* worse than Swin-T at every epoch: a loss of 0.2021 against 0.1983
+  at epoch 1 and 0.1522 against 0.1484 at epoch 3, where SELSA on Swin-T,
+  aggregating proposals, reaches 0.1415. Training references are near and
+  informative, so this is the block itself: a TDTB *replaces* the frame's
+  spatial attention with attention to the reference, so half of TDViT-T's
+  blocks no longer mix the frame's own tokens. Where the reference matches,
+  little is lost; where content moved, the block brings in another frame's
+  tokens and has nothing to fall back on -- the fast-object loss at test.
+
+  The fix tried first keeps the paper's parameters, memory and dilations:
+  `attention='joint'` lets a query attend over its window's own tokens *and*
+  the reference's (a two-frame space-time window, Video Swin's 3D window with
+  a dilated time step), so it can keep to its own frame where the reference
+  does not match. With the frame as its own reference this is exactly Swin
+  (first frames, DET images). `temporal_bias` adds a per-head logit on the
+  reference's keys, from 0. One epoch each: joint (7002429), joint + bias
+  (7002431), joint + bias + past references (7002434), each evaluated as
+  default. The 3-epoch checkpoints of Swin-T and TDViT-T are being evaluated
+  apart (7002376-9): their runs trained to the end but died in the final
+  evaluation, where rank 0 scores for about 17 minutes while the others
+  wait at a barrier and PyTorch 2's NCCL watchdog aborts after 10;
+  `init_dist` now waits two hours.
+
 - **2026-10-01 (distance is the problem)** — The epoch-1 checkpoint of
   TDViT-T under other test protocols (inference only):
 

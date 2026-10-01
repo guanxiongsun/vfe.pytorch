@@ -582,3 +582,65 @@ def test_offset_windows_take_past_references_and_clip_at_the_start(video_dataset
     assert [ref["id"] for ref in refs] == [by_frame[0]["id"]] * 4
     with pytest.raises(ValueError, match="windows"):
         video_dataset.ref_img_sampling(dict(by_frame[0]), **dict(sampler, frame_range=[[-4, -8]] * 4))
+
+
+# ---- joint attention: the frame's window and the reference's together ---------------------
+
+
+@pytest.mark.parametrize("shift", [False, True])
+def test_joint_attention_with_the_frame_as_reference_is_swin_whatever_the_bias(shift):
+    tdtb = block(shift=shift, attention="joint", temporal_bias=True)
+    torch.nn.init.normal_(tdtb.attn.w_msa.temporal_bias, std=2.0)
+    swin = block(SwinBlock, shift=shift)
+    swin.load_state_dict(tdtb.state_dict(), strict=False)
+    x = torch.randn(2, 10 * 11, 16)
+    with torch.no_grad():
+        torch.testing.assert_close(tdtb(x, (10, 11), ref=x), swin(x, (10, 11)),
+                                   rtol=1e-5, atol=1e-5)
+
+
+@pytest.mark.parametrize("shift", [False, True])
+def test_the_temporal_bias_moves_joint_attention_between_swin_and_cross(shift):
+    joint = block(shift=shift, attention="joint", temporal_bias=True)
+    cross = block(shift=shift)
+    cross.load_state_dict(joint.state_dict(), strict=False)
+    swin = block(SwinBlock, shift=shift)
+    swin.load_state_dict(joint.state_dict(), strict=False)
+    x, ref = torch.randn(1, 10 * 11, 16), torch.randn(1, 10 * 11, 16)
+    with torch.no_grad():
+        joint.attn.w_msa.temporal_bias.fill_(-1e4)  # the reference ignored
+        torch.testing.assert_close(joint(x, (10, 11), ref=ref), swin(x, (10, 11)),
+                                   rtol=1e-5, atol=1e-5)
+        joint.attn.w_msa.temporal_bias.fill_(50.0)  # the frame's own keys ignored (e^-50)
+        torch.testing.assert_close(joint(x, (10, 11), ref=ref), cross(x, (10, 11), ref=ref),
+                                   rtol=1e-5, atol=1e-5)
+        joint.attn.w_msa.temporal_bias.zero_()
+        out = joint(x, (10, 11), ref=ref)
+    assert not torch.allclose(out, swin(x, (10, 11))) and not torch.allclose(out, cross(x, (10, 11), ref=ref))
+
+
+def test_joint_online_frames_match_a_recomputation():
+    tdtb = block(shift=True, temporal_dilation=3, attention="joint", temporal_bias=True)
+    torch.nn.init.normal_(tdtb.attn.w_msa.temporal_bias)
+    video = [torch.randn(1, 10 * 11, 16) for _ in range(8)]
+    shadow = MemoryQueue(3)
+    with torch.no_grad():
+        for x in video:
+            ref = shadow.sample(x, (10, 11))
+            shadow.update(x)
+            expected = tdtb(x, (10, 11)) if ref is x else tdtb(x, (10, 11), ref=ref)
+            torch.testing.assert_close(tdtb.forward_online(x, (10, 11)), expected,
+                                       rtol=1e-5, atol=1e-5)
+
+
+def test_joint_tdvit_adds_only_the_temporal_biases_and_all_of_it_learns():
+    tdvit = tiny_tdvit(attention="joint", temporal_bias=True).train()
+    swin_keys = set(SwinTransformer(depths=[2, 2, 6, 2], **TINY).state_dict())
+    extra = sorted(set(tdvit.state_dict()) - swin_keys)
+    assert extra and all(k.endswith("attn.w_msa.temporal_bias") for k in extra)
+    assert len(extra) == 6  # one per TDTB
+    outs = tdvit(torch.randn(1, 3, 72, 104), torch.randn(1, 4, 3, 72, 104))
+    sum(o.square().mean() for o in outs).backward()
+    assert all(p.grad is not None for p in tdvit.parameters())
+    with pytest.raises(ValueError, match="joint"):
+        TDViT(**TINY, temporal_bias=True)

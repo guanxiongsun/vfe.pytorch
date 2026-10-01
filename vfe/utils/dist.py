@@ -8,11 +8,19 @@ GPU numbered by its local rank.
 from __future__ import annotations
 
 import os
+from datetime import timedelta
 
 import torch
 import torch.distributed as dist
 
 __all__ = ["get_dist_info", "init_dist", "is_main_process"]
+
+# How long a collective may wait. While rank 0 scores an evaluation (COCO-style
+# AP over ImageNet VID's 176K frames takes about 17 minutes), the other ranks
+# wait at a barrier. PyTorch 2's NCCL default (10 minutes, then abort) killed
+# such training runs at their final evaluation; torch 1.10, which the
+# original stack used, waited.
+COLLECTIVE_TIMEOUT = timedelta(hours=2)
 
 
 def get_dist_info() -> tuple[int, int]:
@@ -34,4 +42,4 @@ def init_dist(backend: str = "nccl") -> None:
         raise RuntimeError("init_dist expects to run under torchrun (RANK/WORLD_SIZE unset)")
     if backend == "nccl":
         torch.cuda.set_device(int(os.environ.get("LOCAL_RANK", 0)))
-    dist.init_process_group(backend=backend)
+    dist.init_process_group(backend=backend, timeout=COLLECTIVE_TIMEOUT)

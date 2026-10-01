@@ -149,7 +149,15 @@ class MemoryQueue:
 
 class TemporalWindowMSA(WindowMSA):
     """``WindowMSA`` that can also attend from one frame's windows to another's:
-    queries from the first third of ``qkv``, keys and values from the rest."""
+    queries from the first third of ``qkv``, keys and values from the rest.
+
+    ``temporal_bias`` (None unless a TDTB enables it) is a learnable per-head
+    logit added to the reference's keys in joint attention.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.register_parameter("temporal_bias", None)
 
     def key_values(self, windows: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Per-head keys and values ``(nW*B, num_heads, N, head_dims)`` of
@@ -162,15 +170,43 @@ class TemporalWindowMSA(WindowMSA):
         return kv[0], kv[1]
 
     def cross(self, x: torch.Tensor, kv: tuple[torch.Tensor, torch.Tensor],
-              mask: torch.Tensor | None = None) -> torch.Tensor:
+              mask: torch.Tensor | None = None, joint: bool = False) -> torch.Tensor:
         """Attention of query windows ``(nW*B, N, C)`` over a reference's
-        keys and values (from :meth:`key_values`, same windows)."""
+        keys and values (from :meth:`key_values`, same windows) -- with
+        ``joint``, over the windows' own keys and values too."""
         B, N, C = x.shape
+        if joint:
+            qkv = (self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads)
+                   .permute(2, 0, 3, 1, 4))
+            return self.attend_joint(qkv[0], torch.cat((qkv[1], kv[0]), dim=2),
+                                     torch.cat((qkv[2], kv[1]), dim=2), mask)
         bias = self.qkv.bias[:C] if self.qkv.bias is not None else None
         q = (F.linear(x, self.qkv.weight[:C], bias)
              .reshape(B, N, self.num_heads, C // self.num_heads)
              .permute(0, 2, 1, 3))
         return self.attend(q, kv[0], kv[1], mask)
+
+    def attend_joint(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
+                     mask: torch.Tensor | None = None) -> torch.Tensor:
+        """Attention of ``q`` ``(nW*B, num_heads, N, head_dims)`` over ``2N``
+        keys and values: the window's own tokens, then the reference's. Both
+        halves get the relative position bias (they share a grid) and the
+        shift mask; the reference's, the temporal bias too."""
+        B, num_heads, N, _ = q.shape
+        C = num_heads * q.shape[3]
+        attn = (q * self.scale) @ k.transpose(-2, -1)  # (B, heads, N, 2N)
+        bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
+            N, N, -1).permute(2, 0, 1)
+        ref_bias = bias if self.temporal_bias is None else bias + self.temporal_bias.view(-1, 1, 1)
+        attn = attn + torch.cat((bias, ref_bias), dim=-1).unsqueeze(0)
+        if mask is not None:
+            nW = mask.shape[0]
+            attn = (attn.view(B // nW, nW, num_heads, N, 2 * N)
+                    + torch.cat((mask, mask), dim=-1).unsqueeze(1).unsqueeze(0))
+            attn = attn.view(-1, num_heads, N, 2 * N)
+        attn = self.attn_drop(self.softmax(attn))
+        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        return self.proj_drop(self.proj(x))
 
 
 class TemporalShiftWindowMSA(ShiftWindowMSA):
@@ -183,8 +219,10 @@ class TemporalShiftWindowMSA(ShiftWindowMSA):
     w_msa_cls = TemporalWindowMSA
 
     def forward(self, query: torch.Tensor, hw_shape: Sequence[int],
-                kv: tuple[torch.Tensor, torch.Tensor] | None = None) -> torch.Tensor:
-        """``kv`` from :meth:`key_values`; without it, self-attention as in Swin."""
+                kv: tuple[torch.Tensor, torch.Tensor] | None = None,
+                joint: bool = False) -> torch.Tensor:
+        """``kv`` from :meth:`key_values`; without it, self-attention as in Swin.
+        ``joint`` attends over the query's own window too."""
         if kv is None:
             return super().forward(query, hw_shape)
         B, L, C = query.shape
@@ -192,7 +230,7 @@ class TemporalShiftWindowMSA(ShiftWindowMSA):
         windows, (H_pad, W_pad) = self.to_windows(query, hw_shape)
         attn_mask = (self.shift_attn_mask(H_pad, W_pad, query.device)
                      if self.shift_size > 0 else None)
-        attn_windows = self.w_msa.cross(windows, kv, mask=attn_mask)
+        attn_windows = self.w_msa.cross(windows, kv, mask=attn_mask, joint=joint)
         attn_windows = attn_windows.view(-1, self.window_size, self.window_size, C)
         x = self.window_reverse(attn_windows, H_pad, W_pad)
         if self.shift_size > 0:
@@ -244,18 +282,34 @@ class TDTB(SwinBlock):
         memory_feature: what the memory keeps of each frame, the block's
             ``'input'`` (the authors' code) or its ``'output'`` (the text).
         memory_reuse: frames a reference serves; None for ``D_t``.
+        attention: ``'cross'``, the paper's: the keys and values are the
+            reference's alone, so the block gives up the frame's own spatial
+            attention. ``'joint'``: the frame's window and the reference's
+            together (a two-frame space-time window), so a query can keep to
+            its own frame where the reference does not match; with the frame
+            as its own reference this is exactly the Swin block too.
+        temporal_bias: with ``'joint'``, a learnable per-head logit (from 0)
+            on the reference's keys -- how far each head trusts it.
         Other arguments are :class:`SwinBlock`'s.
     """
 
     attn_cls = TemporalShiftWindowMSA
 
     def __init__(self, *args, temporal_dilation: int = 1, memory_sampling: str = "earliest",
-                 memory_feature: str = "input", memory_reuse: int | None = None, **kwargs):
+                 memory_feature: str = "input", memory_reuse: int | None = None,
+                 attention: str = "cross", temporal_bias: bool = False, **kwargs):
         super().__init__(*args, **kwargs)
         if memory_feature not in ("input", "output"):
             raise ValueError(f"memory_feature must be 'input' or 'output', got {memory_feature!r}")
+        if attention not in ("cross", "joint"):
+            raise ValueError(f"attention must be 'cross' or 'joint', got {attention!r}")
+        if temporal_bias and attention != "joint":
+            raise ValueError("temporal_bias needs attention='joint'")
         self.temporal_dilation = temporal_dilation
         self.memory_feature = memory_feature
+        self.joint = attention == "joint"
+        if temporal_bias:
+            self.attn.w_msa.temporal_bias = nn.Parameter(torch.zeros(self.attn.w_msa.num_heads))
         # Per-video inference state, never part of a checkpoint.
         self.memory = MemoryQueue(temporal_dilation, memory_reuse, memory_sampling)
         self._kv_cache: tuple | None = None
@@ -270,9 +324,9 @@ class TDTB(SwinBlock):
             identity = x
             x = self.norm1(x)
             if ref is not None:
-                x = self.attn(x, hw_shape, kv=self.key_values(ref, hw_shape))
+                x = self.attn(x, hw_shape, kv=self.key_values(ref, hw_shape), joint=self.joint)
             else:
-                x = self.attn(x, hw_shape, kv=kv)
+                x = self.attn(x, hw_shape, kv=kv, joint=self.joint)
             x = x + identity
 
             identity = x
@@ -323,7 +377,8 @@ class SpatiotemporalSequence(nn.Module):
     def __init__(self, embed_dims: int, num_heads: int, feedforward_channels: int, depth: int,
                  layout: str, temporal_dilation: int, extra_tdtbs: int = 0,
                  memory_sampling: str = "earliest", memory_feature: str = "input",
-                 memory_reuse: int | None = None, window_size: int = 7, qkv_bias: bool = True,
+                 memory_reuse: int | None = None, attention: str = "cross",
+                 temporal_bias: bool = False, window_size: int = 7, qkv_bias: bool = True,
                  qk_scale: float | None = None, drop_rate: float = 0.0,
                  attn_drop_rate: float = 0.0, drop_path_rate: float | list[float] = 0.0,
                  downsample: nn.Module | None = None, act_cfg: dict | None = None,
@@ -363,7 +418,8 @@ class SpatiotemporalSequence(nn.Module):
                 self.blocks.append(TDTB(temporal_dilation=temporal_dilation,
                                         memory_sampling=memory_sampling,
                                         memory_feature=memory_feature,
-                                        memory_reuse=memory_reuse, **block_cfg))
+                                        memory_reuse=memory_reuse, attention=attention,
+                                        temporal_bias=temporal_bias, **block_cfg))
         self.downsample = downsample
 
     def forward(self, x: torch.Tensor, hw_shape, refs: list | None = None, online: bool = False):
@@ -399,7 +455,8 @@ class TDViT(SwinTransformer):
         extra_tdtbs: per stage, TDTBs appended after ``layout``'s blocks
             (TDViT-T+: ``(0, 0, 2, 0)``); they have no pretrained weights.
         temporal_dilations: ``D_t`` per stage.
-        memory_sampling, memory_feature, memory_reuse: :class:`TDTB`'s.
+        memory_sampling, memory_feature, memory_reuse, attention,
+        temporal_bias: :class:`TDTB`'s.
         Other arguments are :class:`~vfe.models.backbones.SwinTransformer`'s;
         ``depths``, if given, must match ``layout``.
     """
@@ -408,7 +465,8 @@ class TDViT(SwinTransformer):
                  extra_tdtbs: Sequence[int] | None = None,
                  temporal_dilations: Sequence[int] = (4, 8, 16, 32),
                  memory_sampling: str = "earliest", memory_feature: str = "input",
-                 memory_reuse: int | None = None, depths: Sequence[int] | None = None,
+                 memory_reuse: int | None = None, attention: str = "cross",
+                 temporal_bias: bool = False, depths: Sequence[int] | None = None,
                  **kwargs):
         num_stages = len(layout)
         extra_tdtbs = tuple(extra_tdtbs) if extra_tdtbs is not None else (0,) * num_stages
@@ -421,7 +479,8 @@ class TDViT(SwinTransformer):
         stage_cfgs = [
             dict(layout=layout[i], temporal_dilation=temporal_dilations[i],
                  extra_tdtbs=extra_tdtbs[i], memory_sampling=memory_sampling,
-                 memory_feature=memory_feature, memory_reuse=memory_reuse)
+                 memory_feature=memory_feature, memory_reuse=memory_reuse,
+                 attention=attention, temporal_bias=temporal_bias)
             for i in range(num_stages)
         ]
         super().__init__(depths=layout_depths, stage_cfgs=stage_cfgs, **kwargs)
