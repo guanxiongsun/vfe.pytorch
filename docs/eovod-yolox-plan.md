@@ -117,6 +117,24 @@ CONFIG=configs/vid/eovod/eovod_yolox_m_10e.py NAME=eovod_yolox_m_10e ACCUMULATE=
 
 ## Progress log
 
+- **2026-10-01 (joint training: the prior helps YOLOX)** — YOLOX-M trained with
+  the before-PAFPN prior from the COCO weights on video clips, against the same
+  training with every step plain; one epoch each, the detector at 1e-4 and the
+  aggregators at 1e-3 (jobs 6982189, 6982192). Full val:
+
+  | | AP | AP50 | AP75 | VID AP50 | fast |
+  | :-- | --: | --: | --: | --: | --: |
+  | control (plain) | 41.5 | 59.2 | 46.3 | 59.5 | 39.8 |
+  | joint, LPN | **43.2** | 61.7 | 47.7 | 62.0 | 40.7 |
+  | joint, LPN + SPN | 42.3 | 60.2 | 46.6 | 60.6 | 39.0 |
+
+  +1.7 AP / +2.5 AP50 for LPN, FCOS's one-epoch gain (v4: +1.7). So the prior
+  works on YOLOX when trained with it, and not when added to a finished model.
+  The size prior again costs about 1 AP. A first attempt at 1e-3, FCOS's rate,
+  did not learn (control 2.8 AP: objectness loss flat near 4, box loss rising
+  from COCO's 1.55 to 2.5); YOLOX with frozen BatchNorm at batch 8 needs 1e-4.
+  Both are far below stage A (56.1): clip training has no Mosaic, MixUp,
+  multi-scale or EMA, and one epoch is short.
 - **2026-09-30 (stage B, second attempt: no drift, and no gain)** — The
   detector frozen except its classification branch, zero-initialised
   aggregators learning at 1e-2, one epoch from stage A's detector (jobs
