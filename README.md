@@ -8,20 +8,49 @@ reference implementations of
 - **[MAMBA](https://arxiv.org/abs/2401.09923)** — Multi-level Aggregation via Memory Bank (AAAI 2021)
 - **[STPN](https://arxiv.org/abs/2402.02574)** — Spatio-temporal Prompting Network (ICCV 2023)
 - **[EOVOD](https://arxiv.org/abs/2402.09241)** — Efficient One-stage Video Object Detection by
-  Exploiting Temporal Consistency (ECCV 2022), on FCOS: reproduced here at 54.0 COCO-style
-  AP with LPN and 53.8 with LPN + SPN (the paper: 54.1 and 53.8) — see
-  [docs/eovod-plan.md](docs/eovod-plan.md)
+  Exploiting Temporal Consistency (ECCV 2022), on FCOS and YOLOX
 
 together with the ImageNet VID data and annotations needed to train and
 evaluate them, since the official dataset links are no longer reachable.
 
-**Version 2.0 is a rewrite.** Up to 1.x this was a fork of MMDetection 2.19.1
-and needed `mmcv-full`, `mmdet` and a Python 3.8 environment pinned to PyTorch
-1.10. The `vfe/` package now implements everything it uses — models, data
-pipeline, evaluator, training loop, samplers, config system — on plain `torch`
-and `torchvision.ops`. Nothing from mmcv, mmdet or mmengine is imported at
-runtime, and the code runs on current PyTorch. See
-[what changed in 2.0](#what-changed-in-20).
+## News
+
+- **2026-10-01** — EOVOD reproduced on FCOS: 54.0 AP with LPN and 53.8 with
+  LPN + SPN, against the paper's 54.1 and 53.8. EOVOD also runs on YOLOX,
+  ported from MMDetection and checked against it. MAMBA's pixel level, which
+  the original release left out, is implemented
+  ([#7](https://github.com/guanxiongsun/vfe.pytorch/pull/7)).
+- **2026-09-27** — EOVOD implemented from its paper, on a ported FCOS
+  ([#6](https://github.com/guanxiongsun/vfe.pytorch/pull/6)).
+- **2026-09-20** — **v2.0**, a rewrite in plain PyTorch. MAMBA and STPN
+  trained with it score 84.06 and 84.54 AP50 (originally 83.82 and 85.15).
+- **2024-02** — v1.0: MAMBA and STPN code and models, with a mirror of
+  ImageNet VID and COCO-style annotations.
+
+## Highlights
+
+- **Plain PyTorch.** Up to 1.x this was a fork of MMDetection 2.19.1 that
+  needed `mmcv-full` and a Python 3.8 environment pinned to PyTorch 1.10. The
+  `vfe/` package now implements everything it uses — models, data pipeline,
+  evaluator, training loop, samplers, config system — on `torch` and
+  `torchvision.ops`; nothing from mmcv, mmdet or mmengine is imported at
+  runtime. It runs on Python 3.12 and PyTorch 2.10, on x86 and Arm. See
+  [what changed in 2.0](#what-changed-in-20).
+- **Checked against the original.** Every layer of the port is compared,
+  tensor by tensor, with frozen outputs of the original implementation
+  ([docs/parity.md](docs/parity.md)). The YOLOX port matches MMDetection to
+  2.3e-13 in float64, and its training pipeline bit for bit.
+- **Retrained, not only ported.** MAMBA's and STPN's released checkpoints score
+  within 0.02 AP50 of their published results here. Trained from scratch here,
+  MAMBA reaches 84.06 AP50 (published: 83.82), STPN 84.54 (85.15) and EOVOD
+  54.0 AP (the paper: 54.1).
+- **What the original releases left out:** MAMBA's pixel level, EOVOD's
+  location and size priors (LPN and SPN), and EOVOD on YOLOX.
+- **Exact multi-GPU training.** With BatchNorm frozen, `--accumulate k` makes
+  `n` GPUs train exactly as `n * k` did, and `--resume-from auto` continues a
+  run exactly.
+- **Fast inference**, optional and with the same detections: CUDA graphs and
+  fewer GPU syncs run FCOS at 105 FPS and YOLOX-M at over 180 FPS on one GH200.
 
 ## Results
 
@@ -64,6 +93,34 @@ confirmed with a second seed.
 > After one epoch it scores 75.6 AP50 against 72.1 for the instance level
 > alone ([docs/mamba-pixel-plan.md](docs/mamba-pixel-plan.md)). There is no
 > full-schedule checkpoint of it yet.
+
+### EOVOD
+
+ImageNet VID validation, COCO-style AP as the paper reports it:
+
+| Detector | | AP | AP50 | AP75 | paper |
+| :-- | :-- | :--: | :--: | :--: | :--: |
+| FCOS, ResNet-101 | alone | 49.8 | 73.6 | 54.6 | 49.8 / 73.3 / 54.6 |
+| | + LPN | 54.0 | 79.2 | 59.3 | 54.1 / 79.8 / 59.5 |
+| | + LPN + SPN | 53.8 | 78.9 | 59.2 | 53.8 / 76.9 / 58.9 |
+| YOLOX-M | alone | 55.5 | 75.1 | 61.6 | 49.4 / 69.4 / 55.4 |
+| | + LPN | 56.1 | 75.8 | 62.3 | 53.3 / 75.1 / 58.1 |
+| | + LPN + SPN | 55.4 | 74.7 | 61.6 | 52.7 / 74.5 / 56.7 |
+
+FCOS trains for 9 epochs with
+[`eovod_fcos_r101_fpn_9x_backbone_cls_ctrreg.py`](configs/vid/eovod/eovod_fcos_r101_fpn_9x_backbone_cls_ctrreg.py),
+which aggregates before the FPN as the original code does; FCOS alone trains on
+the same schedule. YOLOX-M trains for 10 epochs from the COCO weights, with
+YOLOX's own recipe applied to video clips
+([`eovod_yolox_m_clips_10e.py`](configs/vid/eovod/eovod_yolox_m_clips_10e.py);
+alone, [`eovod_yolox_m_clips_10e_plain.py`](configs/vid/eovod/eovod_yolox_m_clips_10e_plain.py)).
+Started from COCO, YOLOX-M is already stronger than the paper's, and the
+location prior adds 0.6 AP to it, against 4.2 on FCOS; trained alone on still
+images, as YOLOX usually is, it scores 56.1. The size prior is a test-time
+setting of the same model. The checkpoint released with the original EOVOD code
+scores 54.0 / 79.7 / 59.3 here. How each number was reached:
+[docs/eovod-plan.md](docs/eovod-plan.md) and
+[docs/eovod-yolox-plan.md](docs/eovod-yolox-plan.md).
 
 ## Install
 
@@ -128,17 +185,28 @@ Runs write checkpoints and `*.log.json` logs in the original format, so
 and `--resume-from auto` continues a run exactly, generator states included.
 Slurm scripts for Isambard-AI are in [tools/isambard/](tools/isambard/).
 
+EOVOD on YOLOX starts from Megvii's COCO-trained
+[YOLOX-M](https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_m.pth),
+converted once and passed with `--load-from` (the configs name the path used on
+Isambard-AI):
+
+```bash
+python tools/convert_yolox_megvii.py yolox_m.pth yolox_m_coco_eovod.pth --drop-classifier --prefix detector.
+```
+
 ## Tests and parity
 
 ```bash
-python -m pytest                       # 61 fast CPU tests, no data needed
+python -m pytest                       # fast unit tests, no data needed; GPU-only ones skip on CPU
 python tools/checks/run_parity.py check --all
 ```
 
 The second command re-runs every layer of the port against frozen outputs of
 the original implementation and compares them tensor by tensor. See
 [docs/parity.md](docs/parity.md) for how that works, what it does and does not
-claim, and how to rebuild the oracle.
+claim, and how to rebuild the oracle. FCOS and YOLOX, ported for EOVOD, have
+their own two-environment checks: `tools/checks/parity_fcos.py`,
+`parity_yolox.py` and `parity_yolox_pipeline.py`.
 
 ## What changed in 2.0
 
@@ -160,7 +228,9 @@ Configs are unchanged: the same files load in both stacks and resolve
 identically, which is one of the parity checks.
 
 Not carried over: SELSA and the single-frame baselines, fp16 training, and the
-MMDetection model zoo this was forked from — all still in `v1.0.0`.
+MMDetection model zoo this was forked from — all still in `v1.0.0`. A
+single-frame Faster R-CNN baseline is back, as
+[`frcnn_r101_dc5_3x.py`](configs/vid/mamba/frcnn_r101_dc5_3x.py).
 
 ## Citation
 
@@ -170,6 +240,12 @@ MMDetection model zoo this was forked from — all still in `v1.0.0`.
   author    = {Sun, Guanxiong and Hua, Yang and Hu, Guosheng and Robertson, Neil},
   booktitle = {AAAI},
   year      = {2021}
+}
+@inproceedings{sun2022eovod,
+  title     = {Efficient One-stage Video Object Detection by Exploiting Temporal Consistency},
+  author    = {Sun, Guanxiong and Hua, Yang and Hu, Guosheng and Robertson, Neil},
+  booktitle = {ECCV},
+  year      = {2022}
 }
 @inproceedings{sun2023stpn,
   title     = {Spatio-temporal Prompting Network for Robust Video Feature Extraction},
