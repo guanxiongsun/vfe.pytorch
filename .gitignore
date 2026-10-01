@@ -119,6 +119,7 @@ work_dirs/
 # Slurm job outputs written next to the submitted script
 vfe_train_*.out
 vfe_test_*.out
+eovod_inspect_*.out
 stage_imagenet_vid_*.out
 
 # Frozen legacy-side parity artifacts (tools/checks/run_parity.py).

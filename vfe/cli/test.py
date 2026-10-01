@@ -7,6 +7,8 @@ One node, several GPUs:
         --launcher pytorch --work-dir DIR
 Smoke test on the first videos only (no metric; the metric needs every frame):
     python -m vfe.cli.test CONFIG CHECKPOINT --work-dir DIR --max-videos 2
+Config overrides, as for training (e.g. EOVOD without its size prior):
+    python -m vfe.cli.test CONFIG CHECKPOINT --work-dir DIR --cfg-options model.size_prior=None
 
 Writes ``DIR/eval_<timestamp>.json`` (metrics) and, with ``--out``, the raw
 per-frame detections as a pickle, which ``--eval-only`` can re-score later.
@@ -28,7 +30,7 @@ import time
 import torch
 from torch.utils.data import DataLoader, Subset
 
-from vfe.config import Config
+from vfe.config import Config, parse_cfg_options
 from vfe.datasets import build_dataset, collate_video_test
 from vfe.datasets.samplers import DistributedVideoSampler
 from vfe.engine import evaluation_kwargs, make_tmpdir, multi_gpu_test, single_gpu_test
@@ -48,6 +50,8 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--max-videos", type=int, help="run only the first N videos (no metric)")
     ap.add_argument("--workers", type=int, help="override data.workers_per_gpu")
     ap.add_argument("--seed", type=int, help="seed torch's CPU RNG (memory sampling)")
+    ap.add_argument("--cfg-options", nargs="+", default=[], metavar="KEY=VALUE",
+                    help="override config entries, e.g. model.size_prior=None")
     return ap.parse_args()
 
 
@@ -60,6 +64,7 @@ def first_n_videos(dataset, n: int) -> Subset:
 def main() -> None:
     args = parse_args()
     cfg = Config.fromfile(args.config)
+    cfg.merge_from_dict(parse_cfg_options(args.cfg_options))
     if not cfg.get("is_video_model", False):
         raise NotImplementedError("only video models (is_video_model=True) are wired up")
 

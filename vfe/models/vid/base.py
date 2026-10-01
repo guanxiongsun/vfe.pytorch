@@ -18,6 +18,7 @@ __all__ = ["BaseVideoDetector"]
 class BaseVideoDetector(nn.Module):
     def freeze_module(self, module: str | list[str] | tuple[str, ...]) -> None:
         """Put the named submodule(s) in eval mode and stop their gradients.
+        A name may be a dotted path (``'detector.backbone'``).
 
         Note ``eval()`` does not survive a later ``model.train()``; the
         original has the same limitation.
@@ -29,7 +30,7 @@ class BaseVideoDetector(nn.Module):
         else:
             raise TypeError("module must be a str or a list")
         for name in modules:
-            m = getattr(self, name)
+            m = self.get_submodule(name)
             m.eval()
             for param in m.parameters():
                 param.requires_grad = False

@@ -16,6 +16,7 @@ __all__ = [
     "bbox2result",
     "distance2bbox",
     "bbox2distance",
+    "bbox_xyxy_to_cxcywh",
 ]
 
 
@@ -140,3 +141,9 @@ def bbox2result(
         bboxes = bboxes.detach().cpu().numpy()
         labels = labels.detach().cpu().numpy()
     return [bboxes[labels == i, :] for i in range(num_classes)]
+
+
+def bbox_xyxy_to_cxcywh(bbox: torch.Tensor) -> torch.Tensor:
+    """``(..., 4)`` corners -> centre, width, height."""
+    x1, y1, x2, y2 = bbox.split((1, 1, 1, 1), dim=-1)
+    return torch.cat([(x1 + x2) / 2, (y1 + y2) / 2, (x2 - x1), (y2 - y1)], dim=-1)

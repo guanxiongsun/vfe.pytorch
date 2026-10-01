@@ -16,7 +16,9 @@ One addition for EOVOD, absent from mmdet: ``forward``, ``get_bboxes`` and
 size prior skips the head on low levels for frames predicted to hold no small
 objects -- where most of a one-stage detector's head time goes -- and
 ``with_levels=True`` reports which level each detection came from, which the
-size prior needs to decide that. ``loss`` always sees every level.
+size prior needs to decide that. ``with_cls_scores=True`` also reports each
+detection's class score before centerness is multiplied in, which EOVOD may
+validate on. ``loss`` always sees every level.
 """
 
 from __future__ import annotations
@@ -98,6 +100,9 @@ class AnchorFreeHead(nn.Module):
         self.num_base_priors = self.prior_generator.num_base_priors[0]
         self.train_cfg = train_cfg
         self.test_cfg = test_cfg
+        # Post-processing with one GPU->CPU synchronisation per image instead
+        # of one per level (same detections; see _get_bboxes_single_one_sync).
+        self.one_sync_postprocess = False
         self.conv_cfg = conv_cfg
         self.norm_cfg = norm_cfg
         self._init_layers()
@@ -141,9 +146,10 @@ class AnchorFreeHead(nn.Module):
                 normal_init(m, std=0.01)
         normal_init(self.conv_cls, std=0.01, bias=bias_init_with_prob(0.01))
 
-    def forward_single(self, x: torch.Tensor):
+    def forward_single(self, x: torch.Tensor, reg_x: torch.Tensor | None = None):
+        """``reg_x``, when given, feeds the regression tower instead of ``x``."""
         cls_feat = x
-        reg_feat = x
+        reg_feat = x if reg_x is None else reg_x
         for cls_layer in self.cls_convs:
             cls_feat = cls_layer(cls_feat)
         cls_score = self.conv_cls(cls_feat)
@@ -220,17 +226,24 @@ class FCOSHead(AnchorFreeHead):
 
     # ---- forward -----------------------------------------------------------
 
-    def forward(self, feats: Sequence[torch.Tensor], level_ids: Sequence[int] | None = None):
+    def forward(self, feats: Sequence[torch.Tensor], level_ids: Sequence[int] | None = None,
+                reg_feats: Sequence[torch.Tensor] | None = None):
         """``(cls_scores, bbox_preds, centernesses)``, each a list over the
         levels run. ``feats`` holds one map per entry of ``level_ids`` (every
-        level when None)."""
+        level when None); ``reg_feats``, if given, one per level as well, feed
+        the regression tower instead."""
         levels = self._levels(level_ids, len(feats))
         scales = [self.scales[lvl] for lvl in levels]
         strides = [self.strides[lvl] for lvl in levels]
-        return multi_apply(self.forward_single, feats, scales, strides)
+        if reg_feats is None:
+            reg_feats = [None] * len(feats)
+        elif len(reg_feats) != len(feats):
+            raise ValueError(f"{len(reg_feats)} regression maps for {len(feats)} levels")
+        return multi_apply(self.forward_single, feats, scales, strides, reg_feats)
 
-    def forward_single(self, x: torch.Tensor, scale: Scale, stride: int):
-        cls_score, bbox_pred, cls_feat, reg_feat = super().forward_single(x)
+    def forward_single(self, x: torch.Tensor, scale: Scale, stride: int,
+                       reg_x: torch.Tensor | None = None):
+        cls_score, bbox_pred, cls_feat, reg_feat = super().forward_single(x, reg_x)
         centerness = self.conv_centerness(reg_feat if self.centerness_on_reg else cls_feat)
         bbox_pred = scale(bbox_pred).float()
         if self.norm_on_bbox:
@@ -416,12 +429,14 @@ class FCOSHead(AnchorFreeHead):
     # ---- inference ---------------------------------------------------------
 
     def get_bboxes(self, cls_scores, bbox_preds, score_factors=None, img_metas=None, cfg=None,
-                   rescale=False, with_nms=True, level_ids=None, with_levels=False):
+                   rescale=False, with_nms=True, level_ids=None, with_levels=False,
+                   with_cls_scores=False):
         """Per-image detections from the outputs of the levels in ``level_ids``.
 
         Each result is ``(det_bboxes (n, 5), det_labels (n,))``, plus
-        ``det_levels (n,)`` when ``with_levels``. With ``with_nms=False`` the
-        pre-NMS candidates come back instead.
+        ``det_levels (n,)`` when ``with_levels`` and then ``det_cls_scores
+        (n,)`` (the class score before centerness) when ``with_cls_scores``.
+        With ``with_nms=False`` the pre-NMS candidates come back instead.
         """
         if not len(cls_scores) == len(bbox_preds) == len(score_factors):
             raise ValueError("cls_scores, bbox_preds and score_factors must agree in length")
@@ -445,17 +460,23 @@ class FCOSHead(AnchorFreeHead):
                 rescale,
                 with_nms,
                 with_levels,
+                with_cls_scores,
             )
             for img_id in range(len(img_metas))
         ]
 
     def _get_bboxes_single(self, cls_score_list, bbox_pred_list, score_factor_list, mlvl_priors,
                            levels, img_meta, cfg, rescale=False, with_nms=True,
-                           with_levels=False):
+                           with_levels=False, with_cls_scores=False):
         cfg = self.test_cfg if cfg is None else cfg
         img_shape = img_meta["img_shape"]
         nms_pre = cfg.get("nms_pre", -1)
 
+        if self.one_sync_postprocess:
+            return self._get_bboxes_single_one_sync(
+                cls_score_list, bbox_pred_list, score_factor_list, mlvl_priors, levels,
+                img_meta, cfg, rescale, with_nms, with_levels, with_cls_scores,
+            )
         mlvl_bboxes, mlvl_scores, mlvl_labels, mlvl_score_factors, mlvl_levels = [], [], [], [], []
         for cls_score, bbox_pred, score_factor, priors, lvl in zip(
             cls_score_list, bbox_pred_list, score_factor_list, mlvl_priors, levels, strict=True
@@ -486,48 +507,100 @@ class FCOSHead(AnchorFreeHead):
 
         return self._bbox_post_process(
             mlvl_scores, mlvl_labels, mlvl_bboxes, mlvl_levels, img_meta["scale_factor"], cfg,
-            rescale, with_nms, mlvl_score_factors, with_levels,
+            rescale, with_nms, mlvl_score_factors, with_levels, with_cls_scores,
+        )
+
+    def _get_bboxes_single_one_sync(self, cls_score_list, bbox_pred_list, score_factor_list,
+                                    mlvl_priors, levels, img_meta, cfg, rescale, with_nms,
+                                    with_levels, with_cls_scores):
+        """The same candidates as the per-level path, with one GPU->CPU
+        synchronisation per image instead of one per level: each level keeps
+        its ``nms_pre`` best class scores by a stable sort over all of them
+        (those at or below ``score_thr`` set to -inf, so they sort last and
+        valid ties keep index order, as mmdet's sort of the valid subset
+        does), and the invalid ones are dropped once, after concatenation."""
+        img_shape = img_meta["img_shape"]
+        nms_pre = cfg.get("nms_pre", -1)
+        thr = cfg["score_thr"]
+        cols = self.cls_out_channels if self.use_sigmoid_cls else self.cls_out_channels - 1
+        out = {k: [] for k in ("bboxes", "scores", "labels", "factors", "levels", "valid")}
+        for cls_score, bbox_pred, score_factor, priors, lvl in zip(
+            cls_score_list, bbox_pred_list, score_factor_list, mlvl_priors, levels, strict=True
+        ):
+            if cls_score.size()[-2:] != bbox_pred.size()[-2:]:
+                raise ValueError("cls_score and bbox_pred sizes disagree")
+            bbox_pred = bbox_pred.permute(1, 2, 0).reshape(-1, 4)
+            score_factor = score_factor.permute(1, 2, 0).reshape(-1).sigmoid()
+            cls_score = cls_score.permute(1, 2, 0).reshape(-1, self.cls_out_channels)
+            scores = cls_score.sigmoid() if self.use_sigmoid_cls else cls_score.softmax(-1)[:, :-1]
+            flat = scores.reshape(-1)
+            k = flat.numel() if nms_pre is None or nms_pre < 0 else min(nms_pre, flat.numel())
+            ranked, order = flat.masked_fill(flat <= thr, float("-inf")).sort(
+                descending=True, stable=True)
+            order = order[:k]
+            keep_idxs = torch.div(order, cols, rounding_mode="floor")
+            labels = order % cols
+            out["bboxes"].append(self.bbox_coder.decode(
+                priors[keep_idxs], bbox_pred[keep_idxs], max_shape=img_shape))
+            out["scores"].append(flat[order])
+            out["labels"].append(labels)
+            out["factors"].append(score_factor[keep_idxs])
+            out["levels"].append(labels.new_full(labels.shape, lvl))
+            out["valid"].append(ranked[:k] > float("-inf"))
+        valid = torch.cat(out["valid"])
+        kept = {name: [torch.cat(v)[valid]] for name, v in out.items() if name != "valid"}
+        return self._bbox_post_process(
+            kept["scores"], kept["labels"], kept["bboxes"], kept["levels"],
+            img_meta["scale_factor"], cfg, rescale, with_nms, kept["factors"], with_levels,
+            with_cls_scores,
         )
 
     @staticmethod
     def _bbox_post_process(mlvl_scores, mlvl_labels, mlvl_bboxes, mlvl_levels, scale_factor, cfg,
-                           rescale, with_nms, mlvl_score_factors, with_levels):
+                           rescale, with_nms, mlvl_score_factors, with_levels,
+                           with_cls_scores=False):
         mlvl_bboxes = torch.cat(mlvl_bboxes)
         if rescale:
             mlvl_bboxes /= torch.as_tensor(
                 scale_factor, dtype=mlvl_bboxes.dtype, device=mlvl_bboxes.device
             )
-        mlvl_scores = torch.cat(mlvl_scores) * torch.cat(mlvl_score_factors)
+        mlvl_cls_scores = torch.cat(mlvl_scores)
+        mlvl_scores = mlvl_cls_scores * torch.cat(mlvl_score_factors)
         mlvl_labels = torch.cat(mlvl_labels)
         mlvl_levels = torch.cat(mlvl_levels)
 
+        def extras(keep=None):
+            out = ()
+            if with_levels:
+                out += (mlvl_levels if keep is None else mlvl_levels[keep],)
+            if with_cls_scores:
+                out += (mlvl_cls_scores if keep is None else mlvl_cls_scores[keep],)
+            return out
+
         if not with_nms:
-            out = (mlvl_bboxes, mlvl_scores, mlvl_labels)
-            return out + (mlvl_levels,) if with_levels else out
+            return (mlvl_bboxes, mlvl_scores, mlvl_labels) + extras()
 
         if mlvl_bboxes.numel() == 0:
             det_bboxes = torch.cat([mlvl_bboxes, mlvl_scores[:, None]], -1)
-            out = (det_bboxes, mlvl_labels)
-            return out + (mlvl_levels,) if with_levels else out
+            return (det_bboxes, mlvl_labels) + extras()
 
         det_bboxes, keep_idxs = batched_nms(mlvl_bboxes, mlvl_scores, mlvl_labels, cfg["nms"])
         max_per_img = cfg["max_per_img"]
-        det_bboxes = det_bboxes[:max_per_img]
-        det_labels = mlvl_labels[keep_idxs][:max_per_img]
-        out = (det_bboxes, det_labels)
-        return out + (mlvl_levels[keep_idxs][:max_per_img],) if with_levels else out
+        keep_idxs = keep_idxs[:max_per_img]
+        return (det_bboxes[:max_per_img], mlvl_labels[keep_idxs]) + extras(keep_idxs)
 
     # ---- entry points ------------------------------------------------------
 
     def forward_train(self, x, img_metas, gt_bboxes, gt_labels, gt_bboxes_ignore=None,
-                      **kwargs) -> dict[str, torch.Tensor]:
-        outs = self(x)
+                      reg_feats=None, **kwargs) -> dict[str, torch.Tensor]:
+        outs = self(x, reg_feats=reg_feats)
         return self.loss(*outs, gt_bboxes, gt_labels, img_metas, gt_bboxes_ignore=gt_bboxes_ignore)
 
-    def simple_test(self, feats, img_metas, rescale=False, level_ids=None, with_levels=False):
+    def simple_test(self, feats, img_metas, rescale=False, level_ids=None, with_levels=False,
+                    with_cls_scores=False, reg_feats=None):
         """Detections for the levels in ``level_ids`` (all when None)."""
-        outs = self(feats, level_ids=level_ids)
+        outs = self(feats, level_ids=level_ids, reg_feats=reg_feats)
         return self.get_bboxes(
             *outs, img_metas=img_metas, rescale=rescale, level_ids=level_ids,
-            with_levels=with_levels,
+            with_levels=with_levels, with_cls_scores=with_cls_scores,
         )

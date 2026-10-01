@@ -8,6 +8,8 @@ would leave them unstacked. Here metas stay plain Python objects and
 
 ``SeqDefaultFormatBundle`` is the training counterpart of
 ``MultiImagesToTensor``: it also converts ground truth to tensors.
+``DefaultFormatBundle`` and ``Collect`` are mmdet's single-image versions,
+for still-image training (YOLOX's mixed-image pipeline).
 """
 
 from __future__ import annotations
@@ -17,8 +19,8 @@ import torch
 
 from vfe.datasets.builder import PIPELINES
 
-__all__ = ["VideoCollect", "ConcatVideoReferences", "MultiImagesToTensor", "ToList",
-           "SeqDefaultFormatBundle"]
+__all__ = ["VideoCollect", "Collect", "ConcatVideoReferences", "MultiImagesToTensor", "ToList",
+           "SeqDefaultFormatBundle", "DefaultFormatBundle"]
 
 DEFAULT_META_KEYS = ("filename", "ori_filename", "ori_shape", "img_shape", "pad_shape",
                      "scale_factor", "flip", "flip_direction", "img_norm_cfg", "frame_id",
@@ -179,6 +181,10 @@ class SeqDefaultFormatBundle:
     def _format(self, results: dict) -> dict:
         if "img" in results:
             img = results["img"]
+            if img.dtype == np.uint8:
+                # mmdet's DefaultFormatBundle(img_to_float=True), under which
+                # mmtrack's ran; the normalised pipelines are float already.
+                img = img.astype(np.float32)
             if len(img.shape) == 3:
                 img = np.ascontiguousarray(img.transpose(2, 0, 1))
             else:
@@ -189,4 +195,40 @@ class SeqDefaultFormatBundle:
                 results[key] = torch.from_numpy(results[key])
         if "gt_semantic_seg" in results:
             raise NotImplementedError("gt_semantic_seg is not ported")
+        return results
+
+
+@PIPELINES.register_module()
+class Collect(VideoCollect):
+    """mmdet's ``Collect``: :class:`VideoCollect` on one image's results."""
+
+
+@PIPELINES.register_module()
+class DefaultFormatBundle:
+    """One image's results to tensors: the image to ``(C, H, W)`` (float32
+    when ``img_to_float`` and it is uint8), ground truth to tensors. The
+    default meta keys are filled in first, from the ``(H, W, C)`` image."""
+
+    GT_KEYS = ("proposals", "gt_bboxes", "gt_bboxes_ignore", "gt_labels")
+
+    def __init__(self, img_to_float: bool = True):
+        self.img_to_float = img_to_float
+
+    def __call__(self, results: dict) -> dict:
+        if "img" in results:
+            img = results["img"]
+            results.setdefault("pad_shape", img.shape)
+            results.setdefault("scale_factor", 1.0)
+            num_channels = 1 if len(img.shape) < 3 else img.shape[2]
+            results.setdefault("img_norm_cfg", dict(
+                mean=np.zeros(num_channels, dtype=np.float32),
+                std=np.ones(num_channels, dtype=np.float32), to_rgb=False))
+            if self.img_to_float and img.dtype == np.uint8:
+                img = img.astype(np.float32)
+            if len(img.shape) < 3:
+                img = np.expand_dims(img, -1)
+            results["img"] = torch.from_numpy(np.ascontiguousarray(img.transpose(2, 0, 1)))
+        for key in self.GT_KEYS:
+            if key in results:
+                results[key] = torch.from_numpy(np.asarray(results[key]))
         return results

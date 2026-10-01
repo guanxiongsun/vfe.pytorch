@@ -11,19 +11,44 @@ is_video_model = True
 
 model = dict(
     type='EOVOD',
-    # A detection scoring above score_thr is *validated* (the paper's 0.5): it
-    # feeds both priors and the key set. box_ratio is the paper's adjustment
-    # ratio r on the prior boxes.
-    location_prior=dict(score_thr=0.5, box_ratio=0.8),
+    # The recipe below is the one chosen on 2026-09-28 (v4 in
+    # docs/eovod-plan.md). Each departure from the paper's text is marked.
+    #
+    # A detection above score_thr is *validated*: it feeds both priors and the
+    # key set. Departure: 0.3 on the detection score (class score x
+    # centerness), the released code's threshold. The paper's 0.5 on that
+    # score almost never lets the prior engage with FCOS; 0.5 on the class
+    # score alone (validate_on='cls_score', the paper's wording) comes second.
+    # box_ratio is the paper's adjustment ratio r.
+    # Departure: the train_* options. With the ground-truth boxes alone as the
+    # training mask, the head learns to detect the aggregated region instead
+    # of the object (E-M3), so the training prior is made to look like a
+    # previous frame's detections: a quarter of the steps have none (as every
+    # video's first frame; 0.5 halves the prior's gain, 0.1 costs AP75), and
+    # otherwise objects are missed, moved, and joined by up to two false
+    # positives.
+    location_prior=dict(
+        score_thr=0.3,
+        box_ratio=0.8,
+        train_plain_prob=0.25,
+        train_drop_prob=0.3,
+        train_jitter=0.1,
+        train_distractors=2),
     # The paper's T: after a full detection, 7 frames run only the levels the
     # validated boxes came from, so a full detection happens every 8th frame.
-    # interval=0 or None gives the LPN-only model (Table 3 / T=0 in Table 6).
-    size_prior=dict(interval=7),
+    # Departure: margin=1 also runs each recorded level's neighbours; objects
+    # near a range boundary otherwise fall on skipped levels (T = 7 alone cost
+    # 1.1 AP, with the margin 0.1). size_prior=None gives the LPN-only model.
+    size_prior=dict(interval=7, margin=1),
     # The paper's key set: pixels inside the reference frames' detections,
-    # fixed for the video. update=True adds every frame's, MAMBA-style;
-    # num_keys caps the keys read per frame (e.g. 4096 on an 8 GB GPU).
-    memory=dict(update=False),
-    aggregator=dict(num_heads=16, shared=True, query_chunk=1024),
+    # fixed for the video. Departure: num_keys reads a random 4,096 of them
+    # per frame -- no AP change on the full val set, and at 3 epochs the
+    # uncapped set averages ~30k keys (peak memory 52 GB, aggregation 11 ms).
+    memory=dict(update=False, num_keys=4096),
+    # Departure: branches='cls' feeds the aggregated maps to the
+    # classification tower only; the regression tower reads the original
+    # ones (aggregating both raised scores but degraded the boxes, AP75).
+    aggregator=dict(num_heads=16, shared=True, query_chunk=1024, branches='cls'),
     ref_chunk_size=4,
 )
 

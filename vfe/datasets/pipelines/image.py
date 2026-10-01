@@ -11,7 +11,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-__all__ = ["imfrombytes", "rescale_size", "imrescale", "imnormalize", "impad",
+__all__ = ["imfrombytes", "rescale_size", "imrescale", "imresize", "imnormalize", "impad",
            "impad_to_multiple"]
 
 
@@ -38,6 +38,11 @@ def imrescale(img: np.ndarray, scale: tuple[int, int]) -> np.ndarray:
     h, w = img.shape[:2]
     new_size, _ = rescale_size((w, h), scale)
     return cv2.resize(img, new_size, interpolation=cv2.INTER_LINEAR)
+
+
+def imresize(img: np.ndarray, size: tuple[int, int]) -> np.ndarray:
+    """Resize to ``size`` = ``(w, h)`` (bilinear, as mmcv's default)."""
+    return cv2.resize(img, size, interpolation=cv2.INTER_LINEAR)
 
 
 def imnormalize(img: np.ndarray, mean: np.ndarray, std: np.ndarray, to_rgb: bool = True

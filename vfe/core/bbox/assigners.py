@@ -1,4 +1,5 @@
-"""Ground-truth assignment. Port of ``mmdet.core.bbox.assigners.MaxIoUAssigner``.
+"""Ground-truth assignment. Port of ``mmdet.core.bbox.assigners.MaxIoUAssigner``
+and (for YOLOX) ``SimOTAAssigner``.
 
 An assignment labels every candidate box (anchor or proposal) with one of:
 
@@ -15,11 +16,12 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import torch
+import torch.nn.functional as F
 
-from vfe.core.bbox.iou import BboxOverlaps2D
+from vfe.core.bbox.iou import BboxOverlaps2D, bbox_overlaps
 from vfe.core.builder import BBOX_ASSIGNERS, build_iou_calculator
 
-__all__ = ["AssignResult", "MaxIoUAssigner"]
+__all__ = ["AssignResult", "MaxIoUAssigner", "SimOTAAssigner"]
 
 
 class AssignResult:
@@ -226,3 +228,133 @@ class MaxIoUAssigner:
             assigned_labels = None
 
         return AssignResult(num_gts, assigned_gt_inds, max_overlaps, labels=assigned_labels)
+
+
+@BBOX_ASSIGNERS.register_module()
+class SimOTAAssigner:
+    """YOLOX's SimOTA. Port of ``mmdet.core.bbox.assigners.SimOTAAssigner``.
+
+    Candidates are the priors inside a ground-truth box or within
+    ``center_radius`` strides of its centre. Each ground truth takes the
+    ``k`` cheapest candidates, where the cost is the classification BCE of
+    ``sqrt(score)`` plus ``iou_weight x -log IoU`` (plus a huge penalty
+    outside box-and-centre) and ``k`` is the sum of its ``candidate_topk``
+    best IoUs, at least 1. A prior claimed twice keeps its cheapest.
+
+    ``max_overlaps`` of a positive is its IoU with the matched box, which the
+    head uses as the classification target.
+    """
+
+    def __init__(self, center_radius: float = 2.5, candidate_topk: int = 10,
+                 iou_weight: float = 3.0, cls_weight: float = 1.0):
+        self.center_radius = center_radius
+        self.candidate_topk = candidate_topk
+        self.iou_weight = iou_weight
+        self.cls_weight = cls_weight
+
+    def assign(self, pred_scores, priors, decoded_bboxes, gt_bboxes, gt_labels,
+               gt_bboxes_ignore=None, eps: float = 1e-7) -> AssignResult:
+        """``pred_scores (n, C)`` (sigmoid, times objectness), ``priors
+        (n, 4)`` as ``(cx, cy, stride_w, stride_h)``, ``decoded_bboxes (n, 4)``."""
+        try:
+            return self._assign(pred_scores, priors, decoded_bboxes, gt_bboxes, gt_labels, eps)
+        except torch.cuda.OutOfMemoryError:
+            # mmdet's fallback: an image with very many ground truths can
+            # exhaust the GPU; redo it on the CPU.
+            device = pred_scores.device
+            torch.cuda.empty_cache()
+            result = self._assign(pred_scores.cpu(), priors.cpu(), decoded_bboxes.cpu(),
+                                  gt_bboxes.cpu().float(), gt_labels.cpu(), eps)
+            result.gt_inds = result.gt_inds.to(device)
+            result.max_overlaps = result.max_overlaps.to(device)
+            result.labels = result.labels.to(device)
+            return result
+
+    def _assign(self, pred_scores, priors, decoded_bboxes, gt_bboxes, gt_labels, eps):
+        inf = 100000000
+        num_gt = gt_bboxes.size(0)
+        num_bboxes = decoded_bboxes.size(0)
+        assigned_gt_inds = decoded_bboxes.new_full((num_bboxes,), 0, dtype=torch.long)
+        valid_mask, is_in_boxes_and_center = self.get_in_gt_and_in_center_info(priors, gt_bboxes)
+        valid_decoded_bbox = decoded_bboxes[valid_mask]
+        valid_pred_scores = pred_scores[valid_mask]
+        num_valid = valid_decoded_bbox.size(0)
+
+        if num_gt == 0 or num_bboxes == 0 or num_valid == 0:
+            max_overlaps = decoded_bboxes.new_zeros((num_bboxes,))
+            assigned_labels = (None if gt_labels is None else
+                               decoded_bboxes.new_full((num_bboxes,), -1, dtype=torch.long))
+            return AssignResult(num_gt, assigned_gt_inds, max_overlaps, labels=assigned_labels)
+
+        pairwise_ious = bbox_overlaps(valid_decoded_bbox, gt_bboxes)
+        iou_cost = -torch.log(pairwise_ious + eps)
+        gt_onehot_label = F.one_hot(gt_labels.to(torch.int64), pred_scores.shape[-1]).float() \
+            .unsqueeze(0).repeat(num_valid, 1, 1)
+        valid_pred_scores = valid_pred_scores.unsqueeze(1).repeat(1, num_gt, 1)
+        cls_cost = F.binary_cross_entropy(valid_pred_scores.sqrt_(), gt_onehot_label,
+                                          reduction="none").sum(-1)
+        cost_matrix = (cls_cost * self.cls_weight + iou_cost * self.iou_weight
+                       + (~is_in_boxes_and_center) * inf)
+        matched_pred_ious, matched_gt_inds = self.dynamic_k_matching(
+            cost_matrix, pairwise_ious, num_gt, valid_mask)
+
+        # valid_mask now marks the matched priors only.
+        assigned_gt_inds[valid_mask] = matched_gt_inds + 1
+        assigned_labels = assigned_gt_inds.new_full((num_bboxes,), -1)
+        assigned_labels[valid_mask] = gt_labels[matched_gt_inds].long()
+        max_overlaps = assigned_gt_inds.new_full((num_bboxes,), -inf, dtype=torch.float32)
+        max_overlaps[valid_mask] = matched_pred_ious
+        return AssignResult(num_gt, assigned_gt_inds, max_overlaps, labels=assigned_labels)
+
+    def get_in_gt_and_in_center_info(self, priors, gt_bboxes):
+        """``(is_in_gts_or_centers (n,), is_in_boxes_and_centers (m, num_gt))``,
+        the second over the priors the first selects."""
+        num_gt = gt_bboxes.size(0)
+        repeated_x = priors[:, 0].unsqueeze(1).repeat(1, num_gt)
+        repeated_y = priors[:, 1].unsqueeze(1).repeat(1, num_gt)
+        repeated_stride_x = priors[:, 2].unsqueeze(1).repeat(1, num_gt)
+        repeated_stride_y = priors[:, 3].unsqueeze(1).repeat(1, num_gt)
+
+        deltas = torch.stack([repeated_x - gt_bboxes[:, 0], repeated_y - gt_bboxes[:, 1],
+                              gt_bboxes[:, 2] - repeated_x, gt_bboxes[:, 3] - repeated_y], dim=1)
+        is_in_gts = deltas.min(dim=1).values > 0
+        is_in_gts_all = is_in_gts.sum(dim=1) > 0
+
+        gt_cxs = (gt_bboxes[:, 0] + gt_bboxes[:, 2]) / 2.0
+        gt_cys = (gt_bboxes[:, 1] + gt_bboxes[:, 3]) / 2.0
+        ct_box_l = gt_cxs - self.center_radius * repeated_stride_x
+        ct_box_t = gt_cys - self.center_radius * repeated_stride_y
+        ct_box_r = gt_cxs + self.center_radius * repeated_stride_x
+        ct_box_b = gt_cys + self.center_radius * repeated_stride_y
+        ct_deltas = torch.stack([repeated_x - ct_box_l, repeated_y - ct_box_t,
+                                 ct_box_r - repeated_x, ct_box_b - repeated_y], dim=1)
+        is_in_cts = ct_deltas.min(dim=1).values > 0
+        is_in_cts_all = is_in_cts.sum(dim=1) > 0
+
+        is_in_gts_or_centers = is_in_gts_all | is_in_cts_all
+        is_in_boxes_and_centers = (is_in_gts[is_in_gts_or_centers, :]
+                                   & is_in_cts[is_in_gts_or_centers, :])
+        return is_in_gts_or_centers, is_in_boxes_and_centers
+
+    def dynamic_k_matching(self, cost, pairwise_ious, num_gt, valid_mask):
+        """Match each ground truth to its dynamic-k cheapest candidates;
+        updates ``valid_mask`` in place to the matched priors."""
+        matching_matrix = torch.zeros_like(cost)
+        candidate_topk = min(self.candidate_topk, pairwise_ious.size(0))
+        topk_ious, _ = torch.topk(pairwise_ious, candidate_topk, dim=0)
+        dynamic_ks = torch.clamp(topk_ious.sum(0).int(), min=1)
+        for gt_idx in range(num_gt):
+            _, pos_idx = torch.topk(cost[:, gt_idx], k=dynamic_ks[gt_idx].item(), largest=False)
+            matching_matrix[:, gt_idx][pos_idx] = 1.0
+
+        prior_match_gt_mask = matching_matrix.sum(1) > 1
+        if prior_match_gt_mask.sum() > 0:
+            _, cost_argmin = torch.min(cost[prior_match_gt_mask, :], dim=1)
+            matching_matrix[prior_match_gt_mask, :] *= 0.0
+            matching_matrix[prior_match_gt_mask, cost_argmin] = 1.0
+        fg_mask_inboxes = matching_matrix.sum(1) > 0.0
+        valid_mask[valid_mask.clone()] = fg_mask_inboxes
+
+        matched_gt_inds = matching_matrix[fg_mask_inboxes, :].argmax(1)
+        matched_pred_ious = (matching_matrix * pairwise_ious).sum(1)[fg_mask_inboxes]
+        return matched_pred_ious, matched_gt_inds

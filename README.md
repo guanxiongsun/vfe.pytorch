@@ -8,8 +8,9 @@ reference implementations of
 - **[MAMBA](https://arxiv.org/abs/2401.09923)** — Multi-level Aggregation via Memory Bank (AAAI 2021)
 - **[STPN](https://arxiv.org/abs/2402.02574)** — Spatio-temporal Prompting Network (ICCV 2023)
 - **[EOVOD](https://arxiv.org/abs/2402.09241)** — Efficient One-stage Video Object Detection by
-  Exploiting Temporal Consistency (ECCV 2022): implemented from the paper on FCOS,
-  **not yet trained here** — see [docs/eovod-plan.md](docs/eovod-plan.md)
+  Exploiting Temporal Consistency (ECCV 2022), on FCOS: reproduced here at 54.0 COCO-style
+  AP with LPN and 53.8 with LPN + SPN (the paper: 54.1 and 53.8) — see
+  [docs/eovod-plan.md](docs/eovod-plan.md)
 
 together with the ImageNet VID data and annotations needed to train and
 evaluate them, since the official dataset links are no longer reachable.
@@ -53,6 +54,16 @@ confirmed with a second seed.
 > and mmcv rescaled the iteration count). Reading the config literally — batch 8
 > throughout — halves the steps in epochs 1–3 and scores 83.16. The 84.06 above
 > follows the published model's own schedule.
+
+> **MAMBA's pixel level.** The released model is the paper's instance-level
+> variant (Table 3, "Ours_ins": 83.7), which the numbers above reproduce. The
+> paper's full model also enhances the feature map before the RPN, and that
+> pixel level was never released
+> ([#4](https://github.com/guanxiongsun/vfe.pytorch/issues/4)). It is now
+> implemented: [`mamba_full_r101_dc5_3x.py`](configs/vid/mamba/mamba_full_r101_dc5_3x.py).
+> After one epoch it scores 75.6 AP50 against 72.1 for the instance level
+> alone ([docs/mamba-pixel-plan.md](docs/mamba-pixel-plan.md)). There is no
+> full-schedule checkpoint of it yet.
 
 ## Install
 
