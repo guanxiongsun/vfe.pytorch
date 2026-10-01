@@ -93,7 +93,16 @@ class WindowMSA(nn.Module):
             .permute(2, 0, 3, 1, 4)
         )
         q, k, v = qkv[0], qkv[1], qkv[2]
+        return self.attend(q, k, v, mask, num_prompts)
 
+    def attend(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
+               mask: torch.Tensor | None = None, num_prompts: int = 0) -> torch.Tensor:
+        """Attention from per-head ``q``, ``k``, ``v`` of shape (num_windows*B,
+        num_heads, N, head_dims) -- the projected tokens of :meth:`forward`, or
+        TDViT's queries and a reference frame's keys and values -- to the
+        output projection, (num_windows*B, N, C)."""
+        B, _, N, _ = q.shape
+        C = q.shape[1] * q.shape[3]
         q = q * self.scale
         attn = q @ k.transpose(-2, -1)
 
@@ -150,6 +159,8 @@ class ShiftWindowMSA(nn.Module):
     batch STPN runs with prompts.
     """
 
+    w_msa_cls: type[WindowMSA] = WindowMSA
+
     def __init__(
         self,
         embed_dims: int,
@@ -168,7 +179,7 @@ class ShiftWindowMSA(nn.Module):
         self.window_size = window_size
         self.shift_size = shift_size
 
-        self.w_msa = WindowMSA(
+        self.w_msa = self.w_msa_cls(
             embed_dims=embed_dims,
             num_heads=num_heads,
             window_size=to_2tuple(window_size),
@@ -200,26 +211,7 @@ class ShiftWindowMSA(nn.Module):
             shifted_query = torch.roll(
                 query, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2)
             )
-            # Label each region by where it came from, so tokens from different
-            # regions that now share a window can be masked apart.
-            img_mask = torch.zeros((1, H_pad, W_pad, 1), device=query.device)
-            slices = (
-                slice(0, -self.window_size),
-                slice(-self.window_size, -self.shift_size),
-                slice(-self.shift_size, None),
-            )
-            cnt = 0
-            for h in slices:
-                for w in slices:
-                    img_mask[:, h, w, :] = cnt
-                    cnt += 1
-
-            mask_windows = self.window_partition(img_mask)
-            mask_windows = mask_windows.view(-1, self.window_size * self.window_size)
-            attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
-            attn_mask = attn_mask.masked_fill(attn_mask != 0, -100.0).masked_fill(
-                attn_mask == 0, 0.0
-            )
+            attn_mask = self.shift_attn_mask(H_pad, W_pad, query.device)
         else:
             shifted_query = query
             attn_mask = None
@@ -252,6 +244,27 @@ class ShiftWindowMSA(nn.Module):
             x = torch.cat((prompts, x), dim=1)
         return self.drop(x)
 
+    def shift_attn_mask(self, H_pad: int, W_pad: int, device: torch.device) -> torch.Tensor:
+        """The (num_windows, Wh*Ww, Wh*Ww) mask of a shifted map: each region
+        is labelled by where it came from, so tokens from different regions
+        that now share a window are masked apart (-100)."""
+        img_mask = torch.zeros((1, H_pad, W_pad, 1), device=device)
+        slices = (
+            slice(0, -self.window_size),
+            slice(-self.window_size, -self.shift_size),
+            slice(-self.shift_size, None),
+        )
+        cnt = 0
+        for h in slices:
+            for w in slices:
+                img_mask[:, h, w, :] = cnt
+                cnt += 1
+
+        mask_windows = self.window_partition(img_mask)
+        mask_windows = mask_windows.view(-1, self.window_size * self.window_size)
+        attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
+        return attn_mask.masked_fill(attn_mask != 0, -100.0).masked_fill(attn_mask == 0, 0.0)
+
     def window_reverse(self, windows: torch.Tensor, H: int, W: int) -> torch.Tensor:
         window_size = self.window_size
         B = int(windows.shape[0] / (H * W / window_size / window_size))
@@ -268,6 +281,8 @@ class ShiftWindowMSA(nn.Module):
 
 class SwinBlock(nn.Module):
     """LN -> (shifted) window attention -> residual -> LN -> FFN -> residual."""
+
+    attn_cls: type[ShiftWindowMSA] = ShiftWindowMSA
 
     def __init__(
         self,
@@ -291,7 +306,7 @@ class SwinBlock(nn.Module):
         self.with_cp = with_cp
 
         self.norm1 = build_norm_layer(norm_cfg, embed_dims)[1]
-        self.attn = ShiftWindowMSA(
+        self.attn = self.attn_cls(
             embed_dims=embed_dims,
             num_heads=num_heads,
             window_size=window_size,
@@ -414,6 +429,8 @@ class SwinTransformer(nn.Module):
             Microsoft repo and needs ``swin_convert`` applied first.
         frozen_stages: stages (plus the patch embed) held in eval with grads
             off. ``-1`` freezes nothing.
+        stage_cfgs: per-stage keyword arguments added to :meth:`make_stage`'s
+            (TDViT's block layout and temporal dilation); None for plain Swin.
     """
 
     patch_merging_cls: type[PatchMerging] = PatchMerging
@@ -443,6 +460,7 @@ class SwinTransformer(nn.Module):
         convert_weights: bool = False,
         frozen_stages: int = -1,
         init_cfg: dict | None = None,
+        stage_cfgs: list[dict] | None = None,
     ):
         super().__init__()
         act_cfg = act_cfg or {"type": "GELU"}
@@ -499,7 +517,7 @@ class SwinTransformer(nn.Module):
                 else None
             )
             self.stages.append(
-                SwinBlockSequence(
+                self.make_stage(
                     embed_dims=stage_channels,
                     num_heads=num_heads[i],
                     feedforward_channels=mlp_ratio * stage_channels,
@@ -514,6 +532,7 @@ class SwinTransformer(nn.Module):
                     act_cfg=act_cfg,
                     norm_cfg=norm_cfg,
                     with_cp=with_cp,
+                    **(stage_cfgs[i] if stage_cfgs is not None else {}),
                 )
             )
             if downsample:
@@ -522,6 +541,11 @@ class SwinTransformer(nn.Module):
         self.num_features = [int(embed_dims * 2**i) for i in range(num_layers)]
         for i in out_indices:
             self.add_module(f"norm{i}", build_norm_layer(norm_cfg, self.num_features[i])[1])
+
+    def make_stage(self, **kwargs) -> nn.Module:
+        """One stage from :class:`SwinBlockSequence`'s arguments; subclasses
+        with other blocks override this."""
+        return SwinBlockSequence(**kwargs)
 
     def train(self, mode: bool = True):
         super().train(mode)

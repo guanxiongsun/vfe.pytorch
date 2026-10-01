@@ -247,7 +247,13 @@ class RandomCrop:
             results[key] = img[offset_h:offset_h + crop_h, offset_w:offset_w + crop_w, ...]
             img_shape = results[key].shape
         results["img_shape"] = img_shape
+        return self._crop_boxes(results, offset_h, offset_w, img_shape)
 
+    def _crop_boxes(self, results: dict, offset_h: int, offset_w: int,
+                    img_shape: tuple) -> dict | None:
+        """Move the boxes into a crop at ``(offset_h, offset_w)`` of size
+        ``img_shape``; drop the empty ones; reject the sample when no ground
+        truth is left, unless ``allow_negative_crop``."""
         for key in results.get("bbox_fields", []):
             offset = np.array([offset_w, offset_h, offset_w, offset_h], dtype=np.float32)
             bboxes = results[key] - offset
@@ -268,18 +274,42 @@ class RandomCrop:
 class SeqRandomCrop(RandomCrop):
     """``RandomCrop`` on each frame independently (size and position), as the
     STPN configs' registered ``SeqRandomCrop`` did; ``SeqMaxSizePad`` then
-    brings the frames back to one size."""
+    brings the frames back to one size.
+
+    With ``share_params`` every frame is cut at the key frame's window, drawn
+    once (size, then position), so the clip stays aligned -- what TDViT's
+    window attention between frames needs. A frame left without ground truth
+    then rejects the whole clip, unless ``allow_negative_crop``.
+    """
 
     def __init__(self, crop_size, crop_type: str = "absolute", allow_negative_crop: bool = False,
                  recompute_bbox: bool = False, bbox_clip_border: bool = True,
                  share_params: bool = False):
-        if share_params:
-            raise NotImplementedError("share_params=True is not ported")
         super().__init__(crop_size, crop_type, allow_negative_crop, recompute_bbox,
                          bbox_clip_border)
+        self.share_params = share_params
 
-    def __call__(self, results: list[dict]) -> list[dict | None]:
-        return [super(SeqRandomCrop, self).__call__(frame) for frame in results]
+    def __call__(self, results: list[dict]) -> list[dict | None] | None:
+        if not self.share_params:
+            return [super(SeqRandomCrop, self).__call__(frame) for frame in results]
+        h, w = results[0]["img"].shape[:2]
+        crop_h, crop_w = self._get_crop_size((h, w))
+        offset_h = np.random.randint(0, max(h - crop_h, 0) + 1)
+        offset_w = np.random.randint(0, max(w - crop_w, 0) + 1)
+        outs = []
+        for frame in results:
+            _require_no_masks(frame, "SeqRandomCrop")
+            if "gt_instance_ids" in frame:
+                raise NotImplementedError("RandomCrop does not filter gt_instance_ids")
+            for key in frame.get("img_fields", ["img"]):
+                frame[key] = frame[key][offset_h:offset_h + crop_h, offset_w:offset_w + crop_w, ...]
+                img_shape = frame[key].shape
+            frame["img_shape"] = img_shape
+            frame = self._crop_boxes(frame, offset_h, offset_w, img_shape)
+            if frame is None:
+                return None
+            outs.append(frame)
+        return outs
 
 
 @PIPELINES.register_module()

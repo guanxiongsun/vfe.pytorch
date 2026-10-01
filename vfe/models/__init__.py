@@ -1,7 +1,15 @@
 """Model components. Importing this package populates the registries."""
 
 from .aggregators import MambaAggregator
-from .backbones import BasicBlock, Bottleneck, CSPDarknet, ResLayer, ResNet, SwinTransformer
+from .backbones import (
+    BasicBlock,
+    Bottleneck,
+    CSPDarknet,
+    ResLayer,
+    ResNet,
+    SwinTransformer,
+    TDViT,
+)
 from .builder import (
     AGGREGATORS,
     BACKBONES,
@@ -46,7 +54,7 @@ from .roi_heads import (
     SingleRoIExtractor,
     StandardRoIHead,
 )
-from .vid import EOVOD, MAMBA, STPN, BaseVideoDetector
+from .vid import EOVOD, MAMBA, STPN, BaseVideoDetector, TDViTDetector
 
 __all__ = [
     "MODELS",
@@ -74,6 +82,7 @@ __all__ = [
     "BasicBlock",
     "Bottleneck",
     "SwinTransformer",
+    "TDViT",
     "ChannelMapper",
     "FPN",
     "YOLOXPAFPN",
@@ -103,6 +112,7 @@ __all__ = [
     "MAMBA",
     "STPN",
     "EOVOD",
+    "TDViTDetector",
     "CrossEntropyLoss",
     "FocalLoss",
     "IoULoss",

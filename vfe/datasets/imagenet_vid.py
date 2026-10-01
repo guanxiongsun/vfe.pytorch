@@ -174,10 +174,19 @@ class ImagenetVIDDataset:
                 (index ``round(i * stride)``, Python's round-half-to-even).
             test_with_fix_stride: a window of ``stride``-spaced frames on the
                 first frame, then one new frame every ``stride`` frames.
+            stagewise_uniform: one random frame within ``±r`` of the key
+                frame for each ``r`` in the list ``frame_range`` (TDViT's
+                references, one per backbone stage, ``r`` its temporal
+                dilation), in that order rather than by frame. An entry may
+                also be a ``[lo, hi]`` window of offsets from the key frame
+                (``[-8, -4]``: four to eight frames back).
 
         The random methods draw from Python's global ``random``, as the
         original did.
         """
+        if method == "stagewise_uniform":
+            return self._stagewise_sampling(img_info, frame_range, num_ref_imgs, filter_key_img,
+                                            return_key_img)
         if isinstance(frame_range, int):
             if frame_range < 0:
                 raise ValueError("frame_range can not be negative")
@@ -250,6 +259,52 @@ class ImagenetVIDDataset:
                 ref_img_infos.append(info)
             ref_img_infos = sorted(ref_img_infos, key=lambda i: i["frame_id"])
 
+        return [img_info, *ref_img_infos] if return_key_img else ref_img_infos
+
+    def _stagewise_sampling(self, img_info: dict, frame_ranges, num_ref_imgs: int,
+                            filter_key_img: bool, return_key_img: bool) -> list[dict]:
+        """``ref_img_sampling``'s ``stagewise_uniform``. Still images (DET)
+        get copies of themselves. A window past either end of the video is
+        clipped to it, and one left empty gives the frame nearest to it (a
+        window before the video, its first frame -- what a video's first
+        frames attend to at test time); one holding no frame but the
+        filtered key frame gives the key frame."""
+        windows = []
+        for r in frame_ranges if isinstance(frame_ranges, (list, tuple)) else ():
+            if isinstance(r, int) and r >= 0:
+                windows.append((-r, r))
+            elif (isinstance(r, (list, tuple)) and len(r) == 2
+                  and all(isinstance(v, int) for v in r) and r[0] <= r[1]):
+                windows.append((r[0], r[1]))
+            else:
+                windows = []
+                break
+        if not windows:
+            raise ValueError("stagewise_uniform needs a list of ranges >= 0 or [lo, hi] offset "
+                             f"windows, got {frame_ranges}")
+        if num_ref_imgs != len(windows):
+            raise ValueError(f"stagewise_uniform samples one reference per range: num_ref_imgs "
+                             f"{num_ref_imgs} for {len(windows)} ranges")
+        if not self.load_as_video or img_info.get("frame_id", -1) < 0:
+            ref_img_infos = [img_info.copy() for _ in windows]
+        else:
+            vid_id, img_id, frame_id = img_info["video_id"], img_info["id"], img_info["frame_id"]
+            img_ids = self.coco.get_img_ids_from_vid(vid_id)
+            last = len(img_ids) - 1
+            ref_img_infos = []
+            for lo, hi in windows:
+                start, stop = max(0, frame_id + lo), min(frame_id + hi, last)
+                # Bounds, not a slice: a window before the video would give a
+                # negative stop, which Python counts from the end.
+                valid_ids = img_ids[start:stop + 1] if start <= stop else []
+                if not valid_ids:
+                    valid_ids = [img_ids[min(max(frame_id + hi, 0), last)]]
+                if filter_key_img and img_id in valid_ids:
+                    valid_ids.remove(img_id)
+                ref_img_id = random.sample(valid_ids, 1)[0] if valid_ids else img_id
+                info = dict(self.coco.load_imgs([ref_img_id])[0])
+                info["filename"] = info["file_name"]
+                ref_img_infos.append(info)
         return [img_info, *ref_img_infos] if return_key_img else ref_img_infos
 
     # ---- annotations ---------------------------------------------------------
