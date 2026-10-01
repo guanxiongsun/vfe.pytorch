@@ -1,7 +1,7 @@
 """Model components. Importing this package populates the registries."""
 
 from .aggregators import MambaAggregator
-from .backbones import BasicBlock, Bottleneck, ResLayer, ResNet, SwinTransformer
+from .backbones import BasicBlock, Bottleneck, CSPDarknet, ResLayer, ResNet, SwinTransformer
 from .builder import (
     AGGREGATORS,
     BACKBONES,
@@ -23,9 +23,10 @@ from .builder import (
     build_roi_extractor,
     build_shared_head,
 )
-from .dense_heads import AnchorFreeHead, AnchorHead, FCOSHead, RPNHead
+from .dense_heads import AnchorFreeHead, AnchorHead, FCOSHead, RPNHead, YOLOXHead
 from .detectors import (
     FCOS,
+    YOLOX,
     BaseDetector,
     FasterRCNN,
     SingleStageDetector,
@@ -34,7 +35,7 @@ from .detectors import (
 )
 from .losses import Accuracy, CrossEntropyLoss, FocalLoss, IoULoss, L1Loss, SmoothL1Loss, accuracy
 from .memory import MemoryBank
-from .necks import FPN, ChannelMapper
+from .necks import FPN, YOLOXPAFPN, ChannelMapper
 from .roi_heads import (
     BaseRoIExtractor,
     BBoxHead,
@@ -68,21 +69,25 @@ __all__ = [
     "build_memory",
     "build_detector",
     "ResNet",
+    "CSPDarknet",
     "ResLayer",
     "BasicBlock",
     "Bottleneck",
     "SwinTransformer",
     "ChannelMapper",
     "FPN",
+    "YOLOXPAFPN",
     "AnchorHead",
     "RPNHead",
     "AnchorFreeHead",
     "FCOSHead",
+    "YOLOXHead",
     "BaseDetector",
     "TwoStageDetector",
     "FasterRCNN",
     "SingleStageDetector",
     "FCOS",
+    "YOLOX",
     "parse_losses",
     "BaseRoIExtractor",
     "SingleRoIExtractor",

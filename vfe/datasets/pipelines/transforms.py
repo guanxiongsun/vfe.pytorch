@@ -164,8 +164,13 @@ class RandomFlip:
 
     def __call__(self, results: dict) -> dict:
         if "flip" not in results:
-            raise NotImplementedError("RandomFlip deciding by itself is not ported; "
-                                      "use SeqRandomFlip(share_params=True)")
+            if self.flip_ratio is None:
+                raise ValueError("RandomFlip needs flip_ratio unless results['flip'] is set")
+            # mmdet's draw: one np.random.choice over [direction, None].
+            cur_dir = np.random.choice([self.direction, None],
+                                       p=[self.flip_ratio, 1 - self.flip_ratio])
+            results["flip"] = cur_dir is not None
+            results.setdefault("flip_direction", cur_dir)
         if results["flip"]:
             direction = results["flip_direction"]
             for key in results.get("img_fields", ["img"]):
@@ -301,16 +306,19 @@ class SeqNormalize(Normalize):
 
 @PIPELINES.register_module()
 class Pad:
-    """Pad bottom/right to ``size`` or to a multiple of ``size_divisor``.
+    """Pad bottom/right to ``size``, to a multiple of ``size_divisor``, or
+    (``pad_to_square``) to a square of the longer side.
 
     Adds ``pad_shape``, ``pad_fixed_size`` and ``pad_size_divisor``.
     """
 
     def __init__(self, size=None, size_divisor=None, pad_to_square=False,
                  pad_val=None):
+        self.pad_to_square = pad_to_square
         if pad_to_square:
-            raise NotImplementedError("pad_to_square is not ported")
-        if (size is None) == (size_divisor is None):
+            if size is not None or size_divisor is not None:
+                raise ValueError("pad_to_square excludes size and size_divisor")
+        elif (size is None) == (size_divisor is None):
             raise ValueError("exactly one of size and size_divisor must be set")
         if isinstance(pad_val, (int, float)):
             pad_val = dict(img=pad_val, masks=pad_val, seg=255)
@@ -321,6 +329,9 @@ class Pad:
     def __call__(self, results: dict) -> dict:
         pad_val = self.pad_val.get("img", 0)
         for key in results.get("img_fields", ["img"]):
+            if self.pad_to_square:
+                max_size = max(results[key].shape[:2])
+                self.size = (max_size, max_size)
             if self.size is not None:
                 padded = impad(results[key], self.size, pad_val=pad_val)
             else:

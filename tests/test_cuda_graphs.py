@@ -43,9 +43,20 @@ def test_graphed_callable_replays_per_shape_and_falls_back_with_grad():
     assert out.requires_grad  # with gradients on, the eager function runs
 
 
-def test_graphed_detector_matches_eager():
+YOLOX = dict(
+    type="YOLOX",
+    input_size=(96, 128),
+    backbone=dict(type="CSPDarknet", deepen_factor=0.33, widen_factor=0.125),
+    neck=dict(type="YOLOXPAFPN", in_channels=[32, 64, 128], out_channels=32, num_csp_blocks=1),
+    bbox_head=dict(type="YOLOXHead", num_classes=30, in_channels=32, feat_channels=32),
+    test_cfg=dict(score_thr=0.0, nms=dict(type="nms", iou_threshold=0.65), max_per_img=20),
+)
+
+
+@pytest.mark.parametrize("config", [DETECTOR, YOLOX], ids=["fcos", "yolox"])
+def test_graphed_detector_matches_eager(config):
     torch.manual_seed(0)
-    detector = build_detector(DETECTOR).cuda().eval()
+    detector = build_detector(config).cuda().eval()
     img = torch.randn(1, 3, 96, 128, device="cuda")
     new = torch.randn_like(img)
     metas = [dict(img_shape=(96, 128, 3), scale_factor=[1.0] * 4)]

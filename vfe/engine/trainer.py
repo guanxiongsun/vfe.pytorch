@@ -8,6 +8,9 @@ order those hooks did:
   ``parse_losses`` (``train_step``); zero_grad, backward, gradient clipping and
   the optimiser step (``OptimizerHook``); every ``log_config.interval``
   iterations, a log entry averaging the interval (``TextLoggerHook``);
+* the config's ``custom_hooks`` (YOLOX's EMA, pipeline switch and norm sync;
+  :mod:`vfe.engine.hooks`) at mmcv's points: epoch start after the LR, after
+  every optimiser step, and epoch end before the checkpoint;
 * end: a checkpoint every ``checkpoint_config.interval`` epochs and after the
   last (``CheckpointHook``), then evaluation every ``evaluation.interval``
   epochs, logged as a ``val`` entry (``DistEvalHook``).
@@ -64,6 +67,7 @@ from vfe.engine.evaluator import (
     single_gpu_test,
     to_device,
 )
+from vfe.engine.hooks import build_hooks
 from vfe.engine.lr_scheduler import build_lr_scheduler
 from vfe.engine.optimizer import build_optimizer, clip_grads
 from vfe.engine.train_log import LogBuffer, TrainLogger
@@ -75,7 +79,8 @@ __all__ = ["RngStreams", "rescaled_iteration", "train_detector", "train_step"]
 
 # mmdet's NumClassCheckHook only asserts that heads match the dataset's classes;
 # check_num_classes does the same once, up front.
-SUPPORTED_CUSTOM_HOOKS = ("NumClassCheckHook",)
+SUPPORTED_CUSTOM_HOOKS = ("NumClassCheckHook", "ExpMomentumEMAHook", "YOLOXModeSwitchHook",
+                          "SyncNormHook")
 
 
 def check_runtime_config(cfg) -> None:
@@ -219,6 +224,10 @@ def train_detector(model: nn.Module, dataset, cfg, *, work_dir: str, timestamp: 
     samples_per_iter = data_cfg.samples_per_gpu * accumulate
 
     model = model.to(device)
+    hooks = build_hooks(cfg.get("custom_hooks"))
+    for hook in hooks:
+        if hasattr(hook, "before_run"):
+            hook.before_run(model)  # the EMA's buffers: before DDP and before resuming
     ddp = model
     if distributed:
         ddp = DistributedDataParallel(
@@ -226,7 +235,8 @@ def train_detector(model: nn.Module, dataset, cfg, *, work_dir: str, timestamp: 
             broadcast_buffers=False,
             find_unused_parameters=cfg.get("find_unused_parameters", False))
     optimizer = build_optimizer(model, cfg.optimizer)
-    scheduler = build_lr_scheduler(optimizer, cfg.lr_config)
+    scheduler = build_lr_scheduler(optimizer, cfg.lr_config, iters_per_epoch=iters_per_epoch,
+                                   max_epochs=max_epochs)
     grad_clip = (cfg.get("optimizer_config") or {}).get("grad_clip")
 
     rng = RngStreams(accumulate, device)
@@ -252,6 +262,9 @@ def train_detector(model: nn.Module, dataset, cfg, *, work_dir: str, timestamp: 
     elif load_from:
         load_checkpoint(model, load_from, map_location="cpu", log=logger.warning)
         logger.info("loaded weights from %s", load_from)
+        for hook in hooks:
+            if hasattr(hook, "sync_average"):
+                hook.sync_average()  # the EMA starts from the loaded weights
 
     eval_cfg = dict(cfg.get("evaluation") or {})
     eval_interval = eval_cfg.get("interval", 1)
@@ -279,6 +292,8 @@ def train_detector(model: nn.Module, dataset, cfg, *, work_dir: str, timestamp: 
         if accumulate > 1:
             _require_frozen_batch_norm(model)
         scheduler.before_epoch(epoch)
+        for hook in hooks:
+            hook.before_train_epoch(epoch, max_epochs, model, dataset, logger)
         for loader in loaders:
             if hasattr(loader.sampler, "set_epoch"):
                 loader.sampler.set_epoch(epoch)
@@ -299,6 +314,9 @@ def train_detector(model: nn.Module, dataset, cfg, *, work_dir: str, timestamp: 
                 if grad_norm is not None:
                     log_buffer.update({"grad_norm": float(grad_norm)}, samples_per_iter)
             optimizer.step()
+            for hook in hooks:
+                if hasattr(hook, "after_train_iter"):
+                    hook.after_train_iter(global_iter)
 
             log_buffer.update({"time": time.time() - t})
             t = time.time()
@@ -310,6 +328,8 @@ def train_detector(model: nn.Module, dataset, cfg, *, work_dir: str, timestamp: 
                 log_buffer.output.clear()
             global_iter += 1
         del iterators  # stop this epoch's workers before checkpointing and evaluating
+        for hook in hooks:
+            hook.after_train_epoch(epoch, model)
 
         epoch_done = epoch + 1
         if epoch_done % ckpt_interval == 0 or epoch_done == max_epochs:

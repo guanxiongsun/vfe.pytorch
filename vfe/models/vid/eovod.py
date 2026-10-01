@@ -67,6 +67,7 @@ from collections.abc import Sequence
 from typing import Any
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 
 from vfe.core import bbox2result
@@ -230,7 +231,7 @@ def _with_defaults(name: str, given: dict | None, defaults: dict) -> dict:
 @MODELS.register_module()
 class EOVOD(BaseVideoDetector):
     """Args:
-        detector: config of the wrapped single-stage detector (FCOS).
+        detector: config of the wrapped single-stage detector (FCOS, YOLOX).
         location_prior: ``score_thr`` (a detection above it is *validated*;
             the paper's 0.5), ``validate_on`` (``"score"``, the detection
             score, or ``"cls_score"``, the class score before centerness),
@@ -271,9 +272,20 @@ class EOVOD(BaseVideoDetector):
             FPN's outputs; ``'backbone'`` the backbone's, before the FPN (the
             released code's model), with one aggregator per level at the
             backbone's widths and strides ``backbone_strides``. ``levels``:
-            the levels aggregated (default: all).
+            the levels aggregated (default: all). ``zero_init`` starts each
+            aggregator's output projection at zero, so aggregation begins as
+            the identity -- for training it onto an already-trained detector.
         ref_chunk_size: reference frames detected at once when gathering the
             key set at a video's first frame (bounds peak memory).
+        freeze_norm: keep every BatchNorm of the detector in eval mode while
+            training (running statistics frozen, affine parameters still
+            learnt). For detectors that train their BatchNorm, such as YOLOX,
+            when each GPU trains on one key frame -- too few for batch
+            statistics.
+        clip_multiscale: resize each training batch of clips -- key frames,
+            support frames and their boxes -- to the wrapped detector's current
+            multi-scale size and advance its size schedule, as YOLOX does for
+            still images. Needs a detector with that schedule (YOLOX).
         frozen_modules / train_cfg / test_cfg: as for MAMBA.
     """
 
@@ -285,12 +297,18 @@ class EOVOD(BaseVideoDetector):
         memory: dict | None = None,
         aggregator: dict | None = None,
         ref_chunk_size: int = 4,
+        freeze_norm: bool = False,
+        clip_multiscale: bool = False,
         frozen_modules=None,
         train_cfg: Any = None,
         test_cfg: Any = None,
     ):
         super().__init__()
         self.detector = build_detector(detector)
+        self.freeze_norm = freeze_norm
+        if clip_multiscale and not hasattr(self.detector, "_random_resize"):
+            raise ValueError("clip_multiscale needs a detector with a multi-scale schedule (YOLOX)")
+        self.clip_multiscale = clip_multiscale
         head = getattr(self.detector, "bbox_head", None)
         if head is None or not hasattr(head, "strides") or not hasattr(head, "simple_test"):
             raise TypeError("EOVOD wraps a single-stage detector with a multi-level dense head")
@@ -354,7 +372,7 @@ class EOVOD(BaseVideoDetector):
         aggregator = _with_defaults(
             "aggregator", aggregator,
             dict(num_heads=16, shared=True, query_chunk=1024, branches="all", position="fpn",
-                 levels=None, backbone_strides=(4, 8, 16, 32)),
+                 levels=None, backbone_strides=(4, 8, 16, 32), zero_init=False),
         )
         if aggregator["branches"] not in ("all", "cls"):
             raise ValueError("aggregator.branches must be 'all' or 'cls'")
@@ -395,6 +413,11 @@ class EOVOD(BaseVideoDetector):
                 PixelAggregator(c, aggregator["num_heads"]) if lvl in self.agg_levels
                 else nn.Identity() for lvl, c in enumerate(channels)
             )
+        if aggregator["zero_init"]:
+            for agg in self.aggregators:
+                if isinstance(agg, PixelAggregator):
+                    nn.init.zeros_(agg.fc.weight)
+                    nn.init.zeros_(agg.fc.bias)
 
         memory = _with_defaults(
             "memory", memory,
@@ -491,21 +514,49 @@ class EOVOD(BaseVideoDetector):
 
     # ---- training --------------------------------------------------------------
 
+    def train(self, mode: bool = True):
+        super().train(mode)
+        if mode and self.freeze_norm:
+            for m in self.detector.modules():
+                if isinstance(m, nn.modules.batchnorm._BatchNorm):
+                    m.eval()
+        return self
+
     def forward_train(self, img, img_metas, gt_bboxes, gt_labels, ref_img, ref_img_metas,
                       ref_gt_bboxes=None, ref_gt_labels=None, gt_bboxes_ignore=None,
                       **kwargs) -> dict:
-        """Losses for one key frame (``img``, batch size 1) and its support
-        frames (``ref_img``, ``(1, R, C, H, W)``). ``ref_gt_bboxes[0]`` is
-        ``(n, 5)`` as ``[reference index, x1, y1, x2, y2]``."""
-        if len(img) != 1:
-            raise ValueError("EOVOD trains on one key frame per GPU")
-        if self.train_plain_prob > 0 and bool(
-                torch.rand((), device=img.device) < self.train_plain_prob):
+        """Losses for ``B`` key frames (``img`` ``(B, C, H, W)``) and their
+        support frames (``ref_img`` ``(B, R, C, H, W)``). ``ref_gt_bboxes[b]``
+        is ``(n, 5)`` as ``[reference index, x1, y1, x2, y2]``. Each key frame
+        is a plain step (no prior, as on a video's first frame) with
+        probability ``train_plain_prob``, independently.
+
+        Without ``ref_img`` the batch is still images (any size): the wrapped
+        detector trains on them as it would alone -- YOLOX's mixed-image,
+        multi-scale recipe -- and the aggregators sit out."""
+        if ref_img is None:
+            losses = self.detector.forward_train(img, img_metas, gt_bboxes, gt_labels,
+                                                 gt_bboxes_ignore)
+            unused = sum(p.sum() for p in self.aggregators.parameters())
+            losses["loss_cls"] = losses["loss_cls"] + 0 * unused
+            return losses
+        if ref_img.shape[0] != len(img):
+            raise ValueError(f"{len(img)} key frames but support frames for {ref_img.shape[0]}")
+        if ref_gt_bboxes is None:
+            ref_gt_bboxes = [b.new_zeros((0, 5)) for b in gt_bboxes]
+        if self.clip_multiscale:
+            img, ref_img, gt_bboxes, ref_gt_bboxes, img_metas = self._resize_clips(
+                img, ref_img, gt_bboxes, ref_gt_bboxes, img_metas)
+        plain = [self.train_plain_prob > 0 and bool(
+                    torch.rand((), device=img.device) < self.train_plain_prob)
+                 for _ in range(len(img))]
+        if all(plain):
             # No prior, as on every video's first frame at test time.
             feats, reg_feats = self.detector.extract_feat(img), None
         else:
-            feats, plain = self._train_features(img, img_metas, gt_bboxes, ref_img, ref_gt_bboxes)
-            reg_feats = None if self.aggregate_reg else plain
+            feats, plain_feats = self._train_features(img, img_metas, gt_bboxes, ref_img,
+                                                      ref_gt_bboxes, plain)
+            reg_feats = None if self.aggregate_reg else plain_feats
         losses = self.detector.bbox_head.forward_train(
             feats, img_metas, gt_bboxes, gt_labels, gt_bboxes_ignore, reg_feats=reg_feats
         )
@@ -514,27 +565,62 @@ class EOVOD(BaseVideoDetector):
         # DDP sees every parameter used.
         unused = sum(p.sum() for p in self.aggregators.parameters())
         losses["loss_cls"] = losses["loss_cls"] + 0 * unused
+        if self.clip_multiscale:
+            self._advance_clip_size(img.device)
         return losses
 
-    def _train_features(self, img, img_metas, gt_bboxes, ref_img, ref_gt_bboxes):
-        """The key frame's levels with the training prior's cells aggregated
-        over the support frames' ground-truth pixels, and the levels as they
-        were."""
-        refs = ref_img[0]
-        feats = self._stage_one(torch.cat((img, refs), dim=0))
-        key_feats = [f[:1] for f in feats]
-        ref_feats = [f[1:] for f in feats]
+    def _resize_clips(self, img, ref_img, gt_bboxes, ref_gt_bboxes, img_metas):
+        """YOLOX's multi-scale step for clips: the batch (padded to the
+        default input size) resized to the current size, boxes with it."""
+        det = self.detector
+        (h, w), (dh, dw) = det._input_size, det._default_input_size
+        sy, sx = h / dh, w / dw
+        if sx == 1 and sy == 1:
+            return img, ref_img, gt_bboxes, ref_gt_bboxes, img_metas
+        img = F.interpolate(img, size=(h, w), mode="bilinear", align_corners=False)
+        b, r = ref_img.shape[:2]
+        ref_img = F.interpolate(ref_img.flatten(0, 1), size=(h, w), mode="bilinear",
+                                align_corners=False).unflatten(0, (b, r))
+        scale = img.new_tensor([sx, sy, sx, sy])
+        gt_bboxes = [boxes * scale for boxes in gt_bboxes]
+        ref_gt_bboxes = [torch.cat([boxes[:, :1], boxes[:, 1:] * scale], dim=1)
+                         for boxes in ref_gt_bboxes]
+        img_metas = [dict(m, img_shape=(int(m["img_shape"][0] * sy + 0.5),
+                                        int(m["img_shape"][1] * sx + 0.5), 3))
+                     for m in img_metas]
+        return img, ref_img, gt_bboxes, ref_gt_bboxes, img_metas
 
-        if ref_gt_bboxes is not None:
-            ref_boxes = ref_gt_bboxes[0]
-        else:
-            ref_boxes = gt_bboxes[0].new_zeros((0, 5))
-        keys = [self._training_keys(ref_feats[lvl], ref_boxes, lvl) if lvl in self.agg_levels
-                else None for lvl in range(len(feats))]
-        prior = None if self.queries_all else self._training_prior(
-            gt_bboxes[0], img_metas[0]["img_shape"])
-        masks = self._query_masks(key_feats, prior)
-        enhanced = self._stage_two(self._enhance(key_feats, masks, keys))
+    def _advance_clip_size(self, device) -> None:
+        det = self.detector
+        if (det._progress_in_iter + 1) % det._random_size_interval == 0:
+            det._input_size = det._random_resize(device)
+        det._progress_in_iter += 1
+
+    def _train_features(self, img, img_metas, gt_bboxes, ref_img, ref_gt_bboxes, plain=None):
+        """The key frames' levels with each one's training prior's cells
+        aggregated over its support frames' pixels (unchanged for the
+        ``plain`` ones), and the levels as they were."""
+        b, r = ref_img.shape[:2]
+        feats = self._stage_one(torch.cat((img, ref_img.flatten(0, 1)), dim=0))
+        key_feats = [f[:b] for f in feats]
+        ref_feats = [f[b:] for f in feats]
+
+        enhanced = []
+        for i in range(b):
+            sample = [f[i:i + 1] for f in key_feats]
+            if plain is not None and plain[i]:
+                enhanced.append(sample)
+                continue
+            refs = [f[i * r:(i + 1) * r] for f in ref_feats]
+            keys = [self._training_keys(refs[lvl], ref_gt_bboxes[i], lvl)
+                    if lvl in self.agg_levels else None for lvl in range(len(feats))]
+            prior = None if self.queries_all else self._training_prior(
+                gt_bboxes[i], img_metas[i]["img_shape"])
+            masks = self._query_masks(sample, prior)
+            enhanced.append(self._enhance(sample, masks, keys))
+        enhanced = [torch.cat([e[lvl] for e in enhanced]) if b > 1 else enhanced[0][lvl]
+                    for lvl in range(len(feats))]
+        enhanced = self._stage_two(enhanced)
         if self.aggregate_reg:
             return enhanced, None
         return enhanced, self._stage_two(key_feats)
