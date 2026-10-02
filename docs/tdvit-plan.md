@@ -26,8 +26,10 @@
   Swin-T trained the same way (3 epochs: 46.0 against 50.2 AP): it gives up
   the frame's own spatial attention in half of TDViT-T's blocks. With one
   change -- *joint* attention over the frame's window and the reference's --
-  TDViT-T leads Swin-T (epoch 1: 42.0 against 41.0 AP). 3-epoch runs and the
-  other variants are in progress (Progress log).
+  TDViT-T reaches **50.6 AP / 80.3 AP50** at 3 epochs, above the paper's
+  TDViT-T (49.1 / 78.5) and the Swin-T trained alongside it (50.2 / 79.0),
+  at Swin-T's size and speed. TDViT-T+, SELSA and the plain-augmentation
+  recipe are in progress (Progress log).
 
 ## The paper
 
@@ -212,6 +214,44 @@ run of the real config's pipelines on synthetic JPEGs feeds the detector.
 - [ ] **T8 -- S and B** (ImageNet Swin-S/B weights), if wanted.
 
 ## Progress log
+
+- **2026-10-02 (three epochs: joint TDViT-T beats Swin-T and the paper)** —
+  Full val, Faster R-CNN, 3 epochs:
+
+  | | AP | AP50 | AP75 | VID AP50 | fast | medium | slow |
+  | :-- | --: | --: | --: | --: | --: | --: | --: |
+  | Swin-T | 50.2 | 79.0 | 55.4 | 79.5 | 57.3 | 78.8 | 85.7 |
+  | TDViT-T, the paper's block | 46.0 | 75.7 | 49.4 | 76.2 | 51.1 | 75.2 | 83.8 |
+  | **TDViT-T, joint attention** | **50.6** | **80.3** | 56.0 | **80.8** | 59.5 | 80.5 | **87.3** |
+  | the same, memory off at test | 49.9 | 78.5 | 55.5 | 79.0 | 57.6 | 78.3 | 85.2 |
+  | the same, references 1 / 2 / 4 / 8 back | **51.2** | 80.0 | **57.2** | 80.6 | **60.1** | 80.4 | 86.4 |
+  | the same, temporal NMS | 50.8 | 80.3 | 56.5 | 80.9 | 59.9 | 80.7 | 87.2 |
+  | the same, patch shuffle | 50.9 | 80.4 | 56.6 | 80.9 | 59.9 | 80.8 | 87.2 |
+  | *the paper: Swin-T* | *47.1* | *77.2* | *51.5* | | | | |
+  | *the paper: TDViT-T* | *49.1* | *78.5* | *52.7* | | | | |
+
+  With joint attention TDViT-T passes both the paper's TDViT-T (+1.5 AP,
+  +1.8 AP50) and the Swin-T trained alongside it (+0.4 AP, +1.3 AP50 -- the
+  paper's AP50 gain -- +2.2 on fast objects); at test the memory adds 0.7 AP
+  and 1.8 AP50. The sampling strategies keep the paper's order (Table 8:
+  patch shuffle first, NMS level with earliest). One epoch more of joint
+  attention's diagnosis: every stage's TDTBs give 47-50% of their attention
+  to the reference (`tools/tdvit_attention.py`, 20 videos).
+
+  The baseline hypothesis is refuted: Swin-T trained with v1's plain pipeline
+  scores *more*, 51.1 / 79.4 / 57.0 (VID 79.9), than with Swin's
+  augmentation; the paper's 47.1 stays unexplained. Plain augmentation is
+  the stronger recipe here, so TDViT-T joint is being trained with it too.
+
+  At one epoch, two more problems: TDViT-T+ (joint) scores 40.9 AP against
+  TDViT-T's 42.0 -- its two new blocks start from torch's initialisation and
+  disturb the pretrained network -- and SELSA on TDViT-T (joint) 42.4 / VID
+  77.8 against SELSA on Swin-T's 43.3 / 78.1 (which reaches 53.4 / 83.9 / VID
+  **84.5** at 3 epochs, already above the paper's SELSA + TDViT-T, 83.9).
+  Submitted: TDViT-T+ with its new blocks starting as the identity
+  (`extra_init='zero'`, 7007313), TDViT-T joint with the plain pipeline at 3
+  epochs (7007316), SELSA + TDViT-T joint resumed to 3 epochs (7007318), and
+  TDViT-T joint trained with dilations 1 / 2 / 4 / 8 (7007320).
 
 - **2026-10-01 (joint attention works)** — One epoch each, evaluated with the
   paper's test protocol (temporal earliest, references held `D_t` frames):

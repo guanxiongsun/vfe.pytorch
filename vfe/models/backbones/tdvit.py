@@ -454,6 +454,11 @@ class TDViT(SwinTransformer):
             the stages' depths. TDViT-T: ``('st', 'st', 'sssttt', 'st')``.
         extra_tdtbs: per stage, TDTBs appended after ``layout``'s blocks
             (TDViT-T+: ``(0, 0, 2, 0)``); they have no pretrained weights.
+        extra_init: how :meth:`init_weights` starts the extra TDTBs:
+            ``'default'``, torch's initialisation (the authors' code);
+            ``'zero'``, the output projections of both residual branches at
+            zero, so each extra block starts as the identity and the network
+            as TDViT without them.
         temporal_dilations: ``D_t`` per stage.
         memory_sampling, memory_feature, memory_reuse, attention,
         temporal_bias: :class:`TDTB`'s.
@@ -462,12 +467,14 @@ class TDViT(SwinTransformer):
     """
 
     def __init__(self, layout: Sequence[str] = ("st", "st", "sssttt", "st"),
-                 extra_tdtbs: Sequence[int] | None = None,
+                 extra_tdtbs: Sequence[int] | None = None, extra_init: str = "default",
                  temporal_dilations: Sequence[int] = (4, 8, 16, 32),
                  memory_sampling: str = "earliest", memory_feature: str = "input",
                  memory_reuse: int | None = None, attention: str = "cross",
                  temporal_bias: bool = False, depths: Sequence[int] | None = None,
                  **kwargs):
+        if extra_init not in ("default", "zero"):
+            raise ValueError(f"extra_init must be 'default' or 'zero', got {extra_init!r}")
         num_stages = len(layout)
         extra_tdtbs = tuple(extra_tdtbs) if extra_tdtbs is not None else (0,) * num_stages
         if len(temporal_dilations) != num_stages or len(extra_tdtbs) != num_stages:
@@ -486,9 +493,21 @@ class TDViT(SwinTransformer):
         super().__init__(depths=layout_depths, stage_cfgs=stage_cfgs, **kwargs)
         self.temporal_dilations = tuple(temporal_dilations)
         self.memory_feature = memory_feature
+        self.extra_tdtbs = extra_tdtbs
+        self.extra_init = extra_init
 
     def make_stage(self, **kwargs) -> nn.Module:
         return SpatiotemporalSequence(**kwargs)
+
+    def init_weights(self) -> None:
+        super().init_weights()
+        if self.extra_init != "zero":
+            return
+        for stage, num_extra in zip(self.stages, self.extra_tdtbs, strict=True):
+            for block in stage.blocks[len(stage.blocks) - num_extra:]:
+                for linear in (block.attn.w_msa.proj, block.ffn.layers[1]):
+                    nn.init.zeros_(linear.weight)
+                    nn.init.zeros_(linear.bias)
 
     def train(self, mode: bool = True):
         super().train(mode)

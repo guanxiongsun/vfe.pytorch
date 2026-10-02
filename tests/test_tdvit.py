@@ -644,3 +644,26 @@ def test_joint_tdvit_adds_only_the_temporal_biases_and_all_of_it_learns():
     assert all(p.grad is not None for p in tdvit.parameters())
     with pytest.raises(ValueError, match="joint"):
         TDViT(**TINY, temporal_bias=True)
+
+
+@pytest.mark.parametrize("attention", ["cross", "joint"])
+def test_zero_initialised_extra_tdtbs_start_as_the_identity(attention):
+    torch.manual_seed(0)
+    base = TDViT(**TINY, attention=attention)
+    base.init_weights()
+    plus = TDViT(**TINY, attention=attention, extra_tdtbs=(0, 0, 2, 0), extra_init="zero")
+    plus.init_weights()
+    plus.load_state_dict(base.state_dict(), strict=False)  # the blocks they share
+    for block in plus.stages[2].blocks[6:]:
+        assert not block.attn.w_msa.proj.weight.any() and not block.ffn.layers[1].weight.any()
+    base.eval(), plus.eval()
+    img, refs = torch.randn(1, 3, 72, 104), torch.randn(1, 4, 3, 72, 104)
+    with torch.no_grad():
+        for a, b in zip(base(img, refs), plus(img, refs), strict=True):
+            torch.testing.assert_close(a, b, rtol=1e-5, atol=1e-5)
+    # They still learn: the zeroed projections get gradients at once.
+    plus.train()
+    sum(o.square().mean() for o in plus(img, refs)).backward()
+    assert plus.stages[2].blocks[6].attn.w_msa.proj.weight.grad.abs().sum() > 0
+    with pytest.raises(ValueError, match="extra_init"):
+        TDViT(**TINY, extra_init="copy")
