@@ -43,7 +43,7 @@ otherwise. No checkpoint is published yet; the results are in the
 | [`tdvit_tplus_joint_frcnn_fpn_3x.py`](vid/tdvit/tdvit_tplus_joint_frcnn_fpn_3x.py) | TDViT-T+ with joint attention, the two new blocks copied from the pretrained blocks before them |
 | [`frcnn_swins_fpn_3x.py`](vid/tdvit/frcnn_swins_fpn_3x.py), [`tdvit_s_joint_frcnn_fpn_3x.py`](vid/tdvit/tdvit_s_joint_frcnn_fpn_3x.py) | Swin-S, and TDViT-S with joint attention |
 | [`frcnn_swinb_fpn_3x.py`](vid/tdvit/frcnn_swinb_fpn_3x.py), [`tdvit_b_joint_frcnn_fpn_3x.py`](vid/tdvit/tdvit_b_joint_frcnn_fpn_3x.py) | Swin-B and TDViT-B: they build, but were never trained |
-| [`frcnn_swint_fpn_3x_v1aug.py`](vid/tdvit/frcnn_swint_fpn_3x_v1aug.py), [`tdvit_t_joint_frcnn_fpn_3x_v1aug.py`](vid/tdvit/tdvit_t_joint_frcnn_fpn_3x_v1aug.py) | the two tiny models on v1's plain pipeline (resize to 600, flip), which scores higher |
+| [`frcnn_swint_fpn_3x_v1aug.py`](vid/tdvit/frcnn_swint_fpn_3x_v1aug.py), [`tdvit_t_joint_frcnn_fpn_3x_v1aug.py`](vid/tdvit/tdvit_t_joint_frcnn_fpn_3x_v1aug.py), [`tdvit_tplus_joint_frcnn_fpn_3x_v1aug.py`](vid/tdvit/tdvit_tplus_joint_frcnn_fpn_3x_v1aug.py) | the three tiny models on v1's plain pipeline (resize to 600, flip), which scores higher |
 | [`selsa_swint_fpn_3x.py`](vid/tdvit/selsa_swint_fpn_3x.py), [`selsa_tdvit_t_joint_fpn_3x.py`](vid/tdvit/selsa_tdvit_t_joint_fpn_3x.py) | SELSA\* (Table 3: SELSA with RDN's top-75 reference proposals) on Swin-T and on TDViT-T with joint attention |
 | [`selsa_tdvit_t_fpn_3x.py`](vid/tdvit/selsa_tdvit_t_fpn_3x.py) | SELSA\* on TDViT-T as published; never trained |
 

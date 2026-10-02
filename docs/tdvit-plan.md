@@ -37,7 +37,9 @@
 - TDViT-T+ reaches **51.4 / 80.8** (VID 81.4) once its two new blocks start
   as copies of pretrained blocks (`extra_init='copy'`); from torch's
   initialisation or the identity they learn nothing at this learning rate
-  and TDViT-T+ equals TDViT-T. A second seed of Swin-T and TDViT-T puts the
+  and TDViT-T+ equals TDViT-T. On the plain pipeline it equals TDViT-T even
+  so (51.7 against 51.8), so the extra blocks are worth between nothing and
+  a point here, not the paper's 1.8. A second seed of Swin-T and TDViT-T puts the
   run-to-run spread at 0.4 AP / 0.6 AP50: TDViT-T's AP50 gain holds in both
   seeds, its AP gain is within the spread. The paired reference pass
   changes nothing for the tiny models and stays an option for the small.
@@ -239,6 +241,24 @@ run of the real config's pipelines on synthetic JPEGs feeds the detector.
   were trained.
 
 ## Progress log
+
+- **2026-10-03 (TDViT-T+ on the plain recipe)** — Full val, 3 epochs, v1's
+  plain pipeline (resize to 600, flip), the paper's test protocol:
+
+  | | AP | AP50 | AP75 | VID AP50 | fast | medium | slow |
+  | :-- | --: | --: | --: | --: | --: | --: | --: |
+  | Swin-T | 51.1 | 79.4 | 57.0 | 79.9 | 56.9 | 78.7 | 86.5 |
+  | TDViT-T | **51.8** | **81.2** | **57.6** | **81.7** | **59.6** | **80.8** | 88.4 |
+  | TDViT-T+, new blocks copied | 51.7 | 81.0 | 57.5 | 81.6 | 58.8 | 80.4 | 88.4 |
+
+  On this recipe TDViT-T+ equals TDViT-T (-0.1 AP), where on Swin's
+  augmentation it led by 0.8 (51.4 against 50.6). With a run-to-run spread
+  of 0.4 AP, the two extra blocks are worth between nothing and a point: a
+  smaller and less certain gain than the paper's +1.8, and one that does not
+  show on the recipe where both models score higher. TDViT-T's lead over
+  Swin-T, by contrast, holds on both recipes (+0.4 and +0.7 AP, +1.3 and
+  +1.8 AP50). The tiny models' numbers are complete
+  (`tdvit_tplus_joint_frcnn_fpn_3x_v1aug.py`).
 
 - **2026-10-02 (evening: the tiny models' settings are final)** — Full val,
   3 epochs, Swin's augmentation, the paper's test protocol:

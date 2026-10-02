@@ -150,7 +150,8 @@ AP50 gain holds (+0.7 to +1.3), its AP gain (0.0 to +0.4) is within the
 run-to-run spread of 0.4. Trained instead with v1's plain pipeline (resize
 and flip, [`*_v1aug.py`](configs/vid/tdvit)), both tiny models score higher
 and the gap widens: Swin-T 51.1 / 79.4 / 57.0, TDViT-T 51.8 / 81.2 / 57.6
-(VID AP50 79.9 and 81.7).
+(VID AP50 79.9 and 81.7); TDViT-T+ scores 51.7 / 81.0 / 57.5 there, no
+better than TDViT-T.
 
 TDViT is implemented from its paper and the backbone of the authors' CVPR
 2022 supplementary code; its repository was never released. As published, a
@@ -163,8 +164,10 @@ no new parameter) — TDViT-T passes both the Swin-T and the paper's TDViT-T,
 at Swin-T's size and, with `fused_attention=True`, its speed (52.0 against
 51.8 FPS on a GH200). TDViT-T+'s two extra blocks have no ImageNet weights
 and learn nothing at this learning rate from a random start; copied from the
-pretrained blocks before them (`extra_init='copy'`) they add 0.8 AP. The
-Swin-T trained here is 3.1 AP stronger than the paper's. SELSA on TDViT-T
+pretrained blocks before them (`extra_init='copy'`) they add 0.8 AP on Swin's
+augmentation and nothing on the plain recipe — a smaller and less certain
+gain than the paper's 1.8. The Swin-T trained here is 3.1 AP stronger than
+the paper's. SELSA on TDViT-T
 reproduces the paper's Table 3 (VID AP50 83.8 against 83.9), though SELSA on
 Swin-T, which the paper does not report, scores 84.5. The small and base
 variants are configured but not yet tuned. How every number was reached:
