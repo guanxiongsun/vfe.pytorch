@@ -41,7 +41,15 @@ __all__ = [
 
 
 class WindowMSA(nn.Module):
-    """Window-based multi-head self-attention with a relative position bias."""
+    """Window-based multi-head self-attention with a relative position bias.
+
+    ``fused`` (set by ``SwinTransformer(fused_attention=True)``) runs the
+    attention through ``F.scaled_dot_product_attention``, the position bias
+    and the shift mask added as one mask: the same function in fewer kernels,
+    not the same floats, so it is off by default.
+    """
+
+    fused: bool = False
 
     def __init__(
         self,
@@ -93,7 +101,18 @@ class WindowMSA(nn.Module):
             .permute(2, 0, 3, 1, 4)
         )
         q, k, v = qkv[0], qkv[1], qkv[2]
+        return self.attend(q, k, v, mask, num_prompts)
 
+    def attend(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
+               mask: torch.Tensor | None = None, num_prompts: int = 0) -> torch.Tensor:
+        """Attention from per-head ``q``, ``k``, ``v`` of shape (num_windows*B,
+        num_heads, N, head_dims) -- the projected tokens of :meth:`forward`, or
+        TDViT's queries and a reference frame's keys and values -- to the
+        output projection, (num_windows*B, N, C)."""
+        if self.fused and not num_prompts:
+            return self.fused_attention(q, k, v, self.position_bias(), mask)
+        B, _, N, _ = q.shape
+        C = q.shape[1] * q.shape[3]
         q = q * self.scale
         attn = q @ k.transpose(-2, -1)
 
@@ -130,6 +149,28 @@ class WindowMSA(nn.Module):
         x = (attn @ v).transpose(1, 2).reshape(B, N, C)
         return self.proj_drop(self.proj(x))
 
+    def position_bias(self) -> torch.Tensor:
+        """The relative position bias of a window, (num_heads, Wh*Ww, Wh*Ww)."""
+        N = self.window_size[0] * self.window_size[1]
+        return (self.relative_position_bias_table[self.relative_position_index.view(-1)]
+                .view(N, N, -1).permute(2, 0, 1).contiguous())
+
+    def fused_attention(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
+                        bias: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
+        """:meth:`attend` in one fused kernel: ``q`` (num_windows*B, heads, N,
+        head_dims) over ``k`` / ``v`` with S tokens, ``bias`` (heads, N, S) and
+        ``mask`` (num_windows, N, S) added to the logits."""
+        B, num_heads, N, head_dims = q.shape
+        attn_mask = bias.unsqueeze(0).to(q.dtype)
+        if mask is not None:
+            # Windows are laid out image by image: repeat the mask per image.
+            attn_mask = attn_mask + mask.unsqueeze(1).repeat(B // mask.shape[0], 1, 1, 1)
+        x = F.scaled_dot_product_attention(
+            q, k, v, attn_mask=attn_mask, scale=self.scale,
+            dropout_p=self.attn_drop.p if self.training else 0.0)
+        x = x.transpose(1, 2).reshape(B, N, num_heads * head_dims)
+        return self.proj_drop(self.proj(x))
+
     @staticmethod
     def double_step_seq(step1: int, len1: int, step2: int, len2: int) -> torch.Tensor:
         seq1 = torch.arange(0, step1 * len1, step1)
@@ -150,6 +191,8 @@ class ShiftWindowMSA(nn.Module):
     batch STPN runs with prompts.
     """
 
+    w_msa_cls: type[WindowMSA] = WindowMSA
+
     def __init__(
         self,
         embed_dims: int,
@@ -168,7 +211,7 @@ class ShiftWindowMSA(nn.Module):
         self.window_size = window_size
         self.shift_size = shift_size
 
-        self.w_msa = WindowMSA(
+        self.w_msa = self.w_msa_cls(
             embed_dims=embed_dims,
             num_heads=num_heads,
             window_size=to_2tuple(window_size),
@@ -200,26 +243,7 @@ class ShiftWindowMSA(nn.Module):
             shifted_query = torch.roll(
                 query, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2)
             )
-            # Label each region by where it came from, so tokens from different
-            # regions that now share a window can be masked apart.
-            img_mask = torch.zeros((1, H_pad, W_pad, 1), device=query.device)
-            slices = (
-                slice(0, -self.window_size),
-                slice(-self.window_size, -self.shift_size),
-                slice(-self.shift_size, None),
-            )
-            cnt = 0
-            for h in slices:
-                for w in slices:
-                    img_mask[:, h, w, :] = cnt
-                    cnt += 1
-
-            mask_windows = self.window_partition(img_mask)
-            mask_windows = mask_windows.view(-1, self.window_size * self.window_size)
-            attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
-            attn_mask = attn_mask.masked_fill(attn_mask != 0, -100.0).masked_fill(
-                attn_mask == 0, 0.0
-            )
+            attn_mask = self.shift_attn_mask(H_pad, W_pad, query.device)
         else:
             shifted_query = query
             attn_mask = None
@@ -252,6 +276,27 @@ class ShiftWindowMSA(nn.Module):
             x = torch.cat((prompts, x), dim=1)
         return self.drop(x)
 
+    def shift_attn_mask(self, H_pad: int, W_pad: int, device: torch.device) -> torch.Tensor:
+        """The (num_windows, Wh*Ww, Wh*Ww) mask of a shifted map: each region
+        is labelled by where it came from, so tokens from different regions
+        that now share a window are masked apart (-100)."""
+        img_mask = torch.zeros((1, H_pad, W_pad, 1), device=device)
+        slices = (
+            slice(0, -self.window_size),
+            slice(-self.window_size, -self.shift_size),
+            slice(-self.shift_size, None),
+        )
+        cnt = 0
+        for h in slices:
+            for w in slices:
+                img_mask[:, h, w, :] = cnt
+                cnt += 1
+
+        mask_windows = self.window_partition(img_mask)
+        mask_windows = mask_windows.view(-1, self.window_size * self.window_size)
+        attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
+        return attn_mask.masked_fill(attn_mask != 0, -100.0).masked_fill(attn_mask == 0, 0.0)
+
     def window_reverse(self, windows: torch.Tensor, H: int, W: int) -> torch.Tensor:
         window_size = self.window_size
         B = int(windows.shape[0] / (H * W / window_size / window_size))
@@ -268,6 +313,8 @@ class ShiftWindowMSA(nn.Module):
 
 class SwinBlock(nn.Module):
     """LN -> (shifted) window attention -> residual -> LN -> FFN -> residual."""
+
+    attn_cls: type[ShiftWindowMSA] = ShiftWindowMSA
 
     def __init__(
         self,
@@ -291,7 +338,7 @@ class SwinBlock(nn.Module):
         self.with_cp = with_cp
 
         self.norm1 = build_norm_layer(norm_cfg, embed_dims)[1]
-        self.attn = ShiftWindowMSA(
+        self.attn = self.attn_cls(
             embed_dims=embed_dims,
             num_heads=num_heads,
             window_size=window_size,
@@ -414,6 +461,10 @@ class SwinTransformer(nn.Module):
             Microsoft repo and needs ``swin_convert`` applied first.
         frozen_stages: stages (plus the patch embed) held in eval with grads
             off. ``-1`` freezes nothing.
+        stage_cfgs: per-stage keyword arguments added to :meth:`make_stage`'s
+            (TDViT's block layout and temporal dilation); None for plain Swin.
+        fused_attention: every window attention through one fused kernel
+            (``WindowMSA.fused``): faster, numerically close, not identical.
     """
 
     patch_merging_cls: type[PatchMerging] = PatchMerging
@@ -443,6 +494,8 @@ class SwinTransformer(nn.Module):
         convert_weights: bool = False,
         frozen_stages: int = -1,
         init_cfg: dict | None = None,
+        stage_cfgs: list[dict] | None = None,
+        fused_attention: bool = False,
     ):
         super().__init__()
         act_cfg = act_cfg or {"type": "GELU"}
@@ -499,7 +552,7 @@ class SwinTransformer(nn.Module):
                 else None
             )
             self.stages.append(
-                SwinBlockSequence(
+                self.make_stage(
                     embed_dims=stage_channels,
                     num_heads=num_heads[i],
                     feedforward_channels=mlp_ratio * stage_channels,
@@ -514,6 +567,7 @@ class SwinTransformer(nn.Module):
                     act_cfg=act_cfg,
                     norm_cfg=norm_cfg,
                     with_cp=with_cp,
+                    **(stage_cfgs[i] if stage_cfgs is not None else {}),
                 )
             )
             if downsample:
@@ -522,6 +576,15 @@ class SwinTransformer(nn.Module):
         self.num_features = [int(embed_dims * 2**i) for i in range(num_layers)]
         for i in out_indices:
             self.add_module(f"norm{i}", build_norm_layer(norm_cfg, self.num_features[i])[1])
+        if fused_attention:
+            for module in self.modules():
+                if isinstance(module, WindowMSA):
+                    module.fused = True
+
+    def make_stage(self, **kwargs) -> nn.Module:
+        """One stage from :class:`SwinBlockSequence`'s arguments; subclasses
+        with other blocks override this."""
+        return SwinBlockSequence(**kwargs)
 
     def train(self, mode: bool = True):
         super().train(mode)
