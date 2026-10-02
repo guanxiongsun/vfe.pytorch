@@ -17,19 +17,33 @@
   formed) survives in the authors' archive, and the authors answered what
   neither records (below).
 
-## Status (2026-10-01)
+## Status (2026-10-02)
 
-- Implemented and unit-tested: the backbone, the detector (Faster R-CNN and
+- Implemented and unit-tested (57 tests): the backbone with both attention
+  forms (`cross`, the paper's; `joint`) and both reference passes
+  (`spatial`, the authors' code; `paired`), the detector (Faster R-CNN and
   SELSA), the per-stage reference sampling, crops shared by a clip, the
-  Table 2 and Table 3 configs, and a speed tool.
+  configs for T, T+, S, B and SELSA, the fused attention, and the speed
+  and attention-share tools.
 - The paper's block, implemented as the authors' code has it, trails a
   Swin-T trained the same way (3 epochs: 46.0 against 50.2 AP): it gives up
   the frame's own spatial attention in half of TDViT-T's blocks. With one
   change -- *joint* attention over the frame's window and the reference's --
-  TDViT-T reaches **50.6 AP / 80.3 AP50** at 3 epochs, above the paper's
-  TDViT-T (49.1 / 78.5) and the Swin-T trained alongside it (50.2 / 79.0),
-  at Swin-T's size and speed. TDViT-T+, SELSA and the plain-augmentation
-  recipe are in progress (Progress log).
+  TDViT-T reaches **50.6 AP / 80.3 AP50** (VID 80.8) at 3 epochs, above the
+  paper's TDViT-T (49.1 / 78.5) and the Swin-T trained alongside it (50.2 /
+  79.0), at Swin-T's size and, with the fused kernel, its speed; on v1's
+  plain pipeline both score higher (51.1 and 51.8). Table 8's order is
+  reproduced; the reference's distance at test is worth half a point.
+- TDViT-T+ equals TDViT-T so far (50.7): at this learning rate its two new
+  blocks do not train from torch's initialisation or from the identity;
+  copied from pretrained blocks they train at once (3-epoch run pending).
+  SELSA on TDViT-T reproduces the paper's 83.9 (83.8) but SELSA on Swin-T
+  scores 84.5; no further SELSA work. S had one round (Swin-S 56.7, TDViT-S
+  55.2, its diagnosis in the log) and waits until T is final; B is dropped.
+- Pending (evening of 2026-10-02): seed 2 of Swin-T and TDViT-T at 3
+  epochs; TDViT-T+ with copied blocks; TDViT-T and TDViT-T+ with the paired
+  reference pass. These fix the two open settings -- `reference_mode` and
+  the T+ initialisation -- then the README and the PR.
 
 ## The paper
 
@@ -190,30 +204,217 @@ run of the real config's pipelines on synthetic JPEGs feeds the detector.
 - [x] **T2 -- smoke on Isambard** (job 6995011): the 160 tests pass on a
   GH200; 60 iterations each of TDViT-T (0.160 s, 3.5 GB) and Swin-T (0.123
   s); online inference over 3 val videos at 43 frames/s.
-- [ ] **T3 -- Table 2, tiny:** the Swin-T baseline and TDViT-T, 3 epochs at
+- [x] **T3 -- Table 2, tiny:** the Swin-T baseline and TDViT-T, 3 epochs at
   batch 8 (4 GH200s, `--accumulate 2`), evaluated COCO-style and VID-style.
   Target: Swin-T 47.1 / 77.2, TDViT-T 49.1 / 78.5 -- the gain (+2.0 AP, +1.3
-  AP50) matters more than the absolute numbers.
-- [ ] **T4 -- TDViT-T+** (50.9 / 79.9).
-- [ ] **T5 -- ablations:** sampling strategies (inference only: one trained
+  AP50) matters more than the absolute numbers. Done: Swin-T 50.2 / 79.0,
+  TDViT-T (joint attention) 50.6 / 80.3; the paper's block 46.0 / 75.7.
+- [x] **T4 -- TDViT-T+** (50.9 / 79.9): 50.7 / 80.4, equal to TDViT-T here
+  (Progress log, 2026-10-02); a last initialisation under test.
+- [x] **T5 -- ablations:** sampling strategies (inference only: one trained
   model, `--cfg-options model.detector.backbone.memory_sampling=...`),
-  dilations and schemes (retraining).
-- [ ] **T6 -- SELSA + TDViT** (Table 3, 83.9 VID AP50): implemented (MAMBA's
+  dilations and schemes (retraining). Done: Table 8's order reproduced;
+  dilations 1 / 2 / 4 / 8 equal to 4 / 8 / 16 / 32 at one epoch.
+- [x] **T6 -- SELSA + TDViT** (Table 3, 83.9 VID AP50): implemented (MAMBA's
   instance level given its references every frame is SELSA\*); smoke
   6995312 passed (SELSA on TDViT-T 0.281 s an iteration on one GPU, 8.6 GB;
   on Swin-T 0.221 s; inference with 14 references a video at 33 frames/s).
-  To train after T3.
-- [ ] **T7 -- speed** against Swin, eager, as the paper measured
+  Done: 83.8, the paper's number, but SELSA on Swin-T scores 84.5.
+- [x] **T7 -- speed** against Swin, eager, as the paper measured
   (`tools/tdvit_speed.py`). First run (6995305, untrained weights, five
   videos x 100 frames, GH200): Swin-T 25.6 ms a frame (39.0 FPS, backbone
   11.7 ms), TDViT-T 26.0 ms (38.5 FPS, 11.9 ms), TDViT-T+ 27.1 ms (36.9 FPS,
   13.7 ms). The paper's V100: 22.8 / 23.9 / 21.9 FPS. Reusing keys and
   values saves FLOPs that a GH200 running one frame at a time, bound by
   kernel launches, does not turn into time; T+'s cost (-5%) is the paper's
-  (-4%). To repeat with trained weights.
-- [ ] **T8 -- S and B** (ImageNet Swin-S/B weights), if wanted.
+  (-4%). Repeated with trained weights, and with the fused kernel: joint
+  TDViT-T at Swin-T's speed (Progress log, 2026-10-02).
+- [ ] **T8 -- S and B.** One round of S (Swin-S 56.7 / 83.5, TDViT-S 55.2 /
+  83.3 with the spatial reference pass; Progress log) and then deferred, B
+  dropped (2026-10-02): the tiny models' settings are finalised first, and
+  S follows by config. The S and B configs build; only the two S ones above
+  were trained.
 
 ## Progress log
+
+- **2026-10-02 (TDViT-S: where it loses, and a paired reference pass)** —
+  TDViT-S trails its Swin-S by 1.5 AP where TDViT-T leads its Swin-T by
+  0.4. The training logs (one seed, the same samples) place the loss in
+  training: TDViT-S's loss is above Swin-S's at every epoch (0.1819 /
+  0.1535 / 0.1310 against 0.1795 / 0.1504 / 0.1284, 1.3-2.0% more), where
+  joint TDViT-T's is *below* Swin-T's (0.1444 against 0.1484 at epoch 3) --
+  the signature of the paper's block on the tiny models, back at the small
+  scale. The attention shares do not discriminate: at 3 epochs every TDTB of
+  either model gives 0.47-0.50 of its attention to the reference, S's deep
+  stack included (`tools/tdvit_attention.py`, 20 videos).
+
+  What differs between the scales is how many TDTBs a reference passes. The
+  training references' maps are formed as the authors' code forms them: a
+  reference passes through the TDTBs *attending to itself*, so the map a
+  TDTB receives is a Swin map. At test time the memory holds maps computed
+  online, every TDTB attending to its reference, so the keys and values a
+  TDTB sees come from another kind of map than in training. In TDViT-T a
+  stage-3 reference passes two TDTBs before the stage's last one uses it
+  (plus one in each of stages 1 and 2); in TDViT-S, ten. The fix keeps the
+  model and makes training form both sides alike: `reference_mode='paired'`
+  advances the key frame and its references block by block; at every TDTB
+  the key frame attends over its stage's reference map and every reference,
+  without gradients, over the key frame's map (the key frame standing in
+  for the reference's own earlier frames), so the maps the TDTBs receive are
+  joint-attention maps on both sides. With the frame as its own reference
+  this is still exactly Swin, and inference is unchanged (5 tests: the
+  paired pass equals the spatial one wherever a reference has met no TDTB,
+  and differs after one). The S runs that would test it (TDViT-S paired,
+  and TDViT-S with T's three TDTBs in stage 3, `s15 t3`) were submitted and
+  then cancelled with every other S experiment: the small models wait until
+  the tiny ones' settings are final, when extending them is a config change.
+  The paired pass is tested on TDViT-T (7017703) and on TDViT-T+ with its
+  new blocks copied (7018305), against their spatial counterparts (50.6 and
+  7017010); for T, a new reference every frame at the paper's dilations
+  (7017539) splits the reference's distance from the hold.
+
+- **2026-10-02 (three epochs: TDViT-T+, Swin-S, SELSA)** — Full val,
+  Faster R-CNN, 3 epochs, Swin's augmentation:
+
+  | | AP | AP50 | AP75 | VID AP50 | fast | medium | slow |
+  | :-- | --: | --: | --: | --: | --: | --: | --: |
+  | Swin-T | 50.2 | 79.0 | 55.4 | 79.5 | 57.3 | 78.8 | 85.7 |
+  | TDViT-T | 50.6 | 80.3 | 56.0 | 80.8 | 59.5 | 80.5 | 87.3 |
+  | TDViT-T+, new blocks from torch's initialisation | 50.7 | 80.4 | 56.4 | 81.0 | 58.4 | 80.0 | 88.0 |
+  | TDViT-T+, new blocks from the identity | 50.7 | 80.3 | 56.0 | 80.8 | 58.5 | 79.9 | 87.8 |
+  | Swin-S | 56.7 | 83.5 | 64.3 | 84.0 | 63.5 | 83.3 | 89.9 |
+  | TDViT-S | 55.2 | 83.3 | 62.7 | 83.8 | 62.1 | 83.8 | 90.4 |
+  | *the paper: TDViT-T+* | *50.9* | *79.9* | *55.7* | | | | |
+  | *the paper: Swin-S* | *52.6* | *82.4* | *59.3* | | | | |
+  | *the paper: TDViT-S* | *55.4* | *84.1* | *63.4* | | | | |
+
+  **TDViT-T+ equals TDViT-T** (+0.1 AP) however its two new blocks start,
+  so the paper's +1.8 AP from them is not reproduced. The weight norms say
+  why: at 2.5e-5 the new blocks never leave their initialisation (from
+  torch's, 11.2 / 11.3 at the start and at the end of training; from zero,
+  1.3 / 2.2 against a pretrained block's 17.5 / 50.5), so two blocks that
+  cannot be trained from scratch on this recipe are carried along. One
+  initialisation left to try, the natural one: each new block a copy of the
+  pretrained block two before it (`extra_init='copy'`, 7017010), so both
+  start as working blocks with their shifts in place.
+
+  **Swin-S** trained here scores 56.7 AP, 4.1 above the paper's Swin-S and
+  above the paper's TDViT-S (55.4) -- the pattern of the tiny models, whose
+  Swin-T was 3.1 above the paper's. **TDViT-S** lands on the paper's TDViT-S
+  (55.2) but *below* its own Swin-S: -1.5 AP, -0.2 AP50, fast objects -1.4,
+  slow +0.5. At the small scale the gain of the tiny models is gone. TDViT-S
+  has 12 TDTBs of 24, nine of them in a row in stage 3 (Table S1's `s9 t9`)
+  against TDViT-T's 6 of 12, so nine blocks in sequence lean on one
+  reference 16-31 frames back. Its diagnosis follows in the next entry; the
+  S experiments themselves stop there (the user's call, 2026-10-02): the
+  tiny models' settings come first, and the small ones follow by config.
+
+  **SELSA** (Table 3; SELSA\*, RDN's top-75 reference proposals; 3 epochs):
+
+  | SELSA on | AP | AP50 | AP75 | VID AP50 | fast | medium | slow |
+  | :-- | --: | --: | --: | --: | --: | --: | --: |
+  | Swin-T | **53.4** | **83.9** | **59.2** | **84.5** | **68.6** | **84.5** | **89.6** |
+  | TDViT-T, joint attention | 52.1 | 83.2 | 57.6 | 83.8 | 67.7 | 84.3 | 88.4 |
+  | the same, memory off at test | 52.2 | 82.6 | 58.0 | 83.2 | 67.8 | 83.5 | 87.6 |
+  | the same, references 1 / 2 / 4 / 8 back | 52.9 | 83.5 | 58.9 | 84.0 | **69.2** | 84.5 | 88.1 |
+  | *the paper: TDViT-T* | | | | *83.9* | *67.7* | *83.8* | *88.6* |
+
+  SELSA on TDViT-T lands on the paper's row (83.8 against 83.9, the same
+  67.7 on fast objects). But SELSA on Swin-T, the comparison the paper does
+  not make, scores 84.5: on top of proposal aggregation across the video
+  the backbone's memory costs 0.7 VID AP50 and 1.3 AP, at epoch 1 as at
+  epoch 3 (43.3 / 78.1 against 42.4 / 77.8 there). Two inference-only runs
+  of the checkpoint place the loss. With the memory off -- TDViT's weights
+  as a still backbone under SELSA -- it scores 52.2 / VID 83.2: the memory
+  does add at test time (+0.6 VID AP50, nothing in AP), and the weights
+  themselves are 1.2 AP behind SELSA on Swin-T's. The backbone trained under
+  SELSA serves two modes at once -- the key frame with its references, and
+  SELSA's reference frames on their own (`forward_spatial`, the references
+  being spread over the video rather than in order) -- and comes out weaker
+  than Swin-T trained for one. With near references (1 / 2 / 4 / 8 back, a
+  new one every frame) it reaches 52.9 / VID 84.0 and 69.2 on fast objects,
+  above SELSA on Swin-T's 68.6; the 0.5 left is all on slow objects (88.1
+  against 89.6), where SELSA's aggregation over the whole video is at its
+  best. As with Faster R-CNN, the paper's test protocol -- a reference held
+  `D_t` frames, so 16 to 63 frames back in the later stages -- costs what
+  nearer references would give.
+
+  Swin-B and TDViT-B were dropped (the user's call); their configs stay,
+  untrained.
+
+- **2026-10-02 (the plain recipe; how noisy one epoch is)** — TDViT-T
+  (joint) trained 3 epochs with v1's plain pipeline (resize to 600, flip),
+  next to the Swin-T trained the same way:
+
+  | 3 epochs | AP | AP50 | AP75 | VID AP50 | fast | medium | slow |
+  | :-- | --: | --: | --: | --: | --: | --: | --: |
+  | Swin-T, Swin's augmentation | 50.2 | 79.0 | 55.4 | 79.5 | 57.3 | 78.8 | 85.7 |
+  | TDViT-T, Swin's augmentation | 50.6 | 80.3 | 56.0 | 80.8 | 59.5 | 80.5 | 87.3 |
+  | Swin-T, resize and flip | 51.1 | 79.4 | 57.0 | 79.9 | 56.9 | 78.7 | 86.5 |
+  | **TDViT-T, resize and flip** | **51.8** | **81.2** | **57.6** | **81.7** | **59.6** | **80.8** | **88.4** |
+
+  On the plain recipe too TDViT-T leads Swin-T (+0.7 AP, +1.8 AP50, every
+  motion class 1.9-2.7 VID AP50 up), and both are better than with Swin's
+  augmentation, which the paper used (`*_v1aug.py`).
+
+  Seed 2 measures one epoch's noise (`--seed 2`: other initial heads, other
+  samples):
+
+  | Epoch 1 | AP | AP50 | AP75 | VID AP50 |
+  | :-- | --: | --: | --: | --: |
+  | TDViT-T, seed 1 | 42.0 | 74.6 | 43.9 | 75.1 |
+  | TDViT-T, seed 2 | 41.4 | 73.7 | 43.1 | 74.2 |
+  | TDViT-T+ from the identity, seed 1 | 40.7 | 72.8 | 42.0 | 73.3 |
+  | TDViT-T+ from the identity, seed 2 | 41.3 | 73.7 | 42.7 | 74.2 |
+
+  Two seeds of one model differ by 0.6 AP and 0.9 AP50 after one epoch, and
+  with seed 2 TDViT-T+ equals TDViT-T: TDViT-T+'s gap at one epoch was noise.
+  The one-epoch comparisons above that found no difference (the temporal
+  bias, past references, small dilations) stand; differences under about a
+  point at one epoch are not evidence. To make the 3-epoch comparison firm,
+  Swin-T and TDViT-T are trained again with seed 2 (7011182, 7011184).
+
+- **2026-10-02 (TDViT-T+, the dilations, the speed)** — One epoch each,
+  joint attention, the default test protocol unless marked:
+
+  | Epoch 1 | AP | AP50 | AP75 | VID AP50 | fast | medium | slow |
+  | :-- | --: | --: | --: | --: | --: | --: | --: |
+  | TDViT-T | **42.0** | **74.6** | **43.9** | 75.1 | 51.4 | 75.1 | **82.7** |
+  | the same, references 1 / 2 / 4 / 8 back | 42.6 | 74.4 | 45.3 | 74.9 | 52.4 | 74.8 | 81.8 |
+  | TDViT-T trained with dilations 1 / 2 / 4 / 8 | **42.0** | **74.6** | 43.5 | **75.2** | **53.0** | **75.3** | 82.1 |
+  | TDViT-T+, new blocks from torch's initialisation | 40.9 | 72.8 | 42.0 | 73.3 | 49.3 | 72.6 | 80.6 |
+  | the same, references 1 / 2 / 4 / 8 back | 41.7 | 72.8 | 43.9 | 73.3 | 50.5 | 72.8 | 79.7 |
+  | TDViT-T+, new blocks starting as the identity | 40.7 | 72.8 | 42.0 | 73.3 | 50.3 | 72.8 | 80.6 |
+
+  The dilations trained small do no better than the paper's (Table 7 has
+  1 / 2 / 4 / 8 1.3 AP50 worse); 4 / 8 / 16 / 32 stay. TDViT-T+ trails
+  TDViT-T by 1.8 AP50 whether its two new TDTBs start from torch's
+  initialisation (as the authors' code leaves blocks missing from the
+  checkpoint) or as the identity (`extra_init='zero'`: the attention's and
+  the MLP's output projections zero), and with near references as well, so
+  neither the initialisation nor the distance explains it. Nor do the new
+  blocks learn much in an epoch: their weights' norms barely move from
+  torch's initialisation (attention projection 11.2, MLP output 11.3), and
+  from zero they reach only 1.3 and 2.2 against a pretrained block's 17.5
+  and 50.5 -- about what AdamW's steps add up to with no steady direction
+  (`sqrt(13,711) x 2.5e-5` = 0.003 a weight). Started from the identity,
+  TDViT-T+ is TDViT-T plus two near-identity blocks, yet 1.3 AP lower: the
+  gap may be the run's own noise (with a different architecture the heads
+  start from different random numbers). Submitted: TDViT-T again with seed 2
+  (7008142), and both TDViT-T+ runs resumed to 3 epochs (7008182, 7008184),
+  where the paper's +1.8 AP is measured.
+
+  **Speed** with the trained 3-epoch weights (GH200, eager, five val videos
+  x 100 frames, one frame at a time): Swin-T 19.8 ms a frame (50.5 FPS),
+  the paper's block 20.1 ms (49.7), joint attention 20.9 ms (47.8): twice
+  the keys cost 5% (7007335). Attention through PyTorch's fused kernel
+  (`fused_attention=True`, `F.scaled_dot_product_attention` with the
+  position bias as its mask; off by default, which keeps Swin bit-identical)
+  takes it back; in one run (7007390), Swin-T goes from 20.6 to 19.3 ms a
+  frame (51.8 FPS) and joint TDViT-T from 21.5 to 19.2 ms (52.0).
+  The paper's V100 had TDViT-T 5% faster than Swin-T (23.9 against 22.8
+  FPS) from reusing the reference's keys and values; on a GH200 running one
+  frame at a time, launch-bound, the saving does not show.
 
 - **2026-10-02 (three epochs: joint TDViT-T beats Swin-T and the paper)** —
   Full val, Faster R-CNN, 3 epochs:
@@ -225,6 +426,7 @@ run of the real config's pipelines on synthetic JPEGs feeds the detector.
   | **TDViT-T, joint attention** | **50.6** | **80.3** | 56.0 | **80.8** | 59.5 | 80.5 | **87.3** |
   | the same, memory off at test | 49.9 | 78.5 | 55.5 | 79.0 | 57.6 | 78.3 | 85.2 |
   | the same, references 1 / 2 / 4 / 8 back | **51.2** | 80.0 | **57.2** | 80.6 | **60.1** | 80.4 | 86.4 |
+  | the same, a new reference every frame, 4 / 8 / 16 / 32 back | 50.8 | 80.3 | 56.5 | 80.9 | 59.7 | 80.8 | 87.3 |
   | the same, temporal NMS | 50.8 | 80.3 | 56.5 | 80.9 | 59.9 | 80.7 | 87.2 |
   | the same, patch shuffle | 50.9 | 80.4 | 56.6 | 80.9 | 59.9 | 80.8 | 87.2 |
   | *the paper: Swin-T* | *47.1* | *77.2* | *51.5* | | | | |
@@ -234,9 +436,13 @@ run of the real config's pipelines on synthetic JPEGs feeds the detector.
   +1.8 AP50) and the Swin-T trained alongside it (+0.4 AP, +1.3 AP50 -- the
   paper's AP50 gain -- +2.2 on fast objects); at test the memory adds 0.7 AP
   and 1.8 AP50. The sampling strategies keep the paper's order (Table 8:
-  patch shuffle first, NMS level with earliest). One epoch more of joint
-  attention's diagnosis: every stage's TDTBs give 47-50% of their attention
-  to the reference (`tools/tdvit_attention.py`, 20 videos).
+  patch shuffle first, NMS level with earliest). The reference's distance is
+  worth half a point at most, nearly all of it AP75: a new reference every
+  frame at the paper's distances (no hold, so no reuse of keys and values)
+  gives 50.8, near references 51.2, and the VID AP50 hardly moves (80.6 to
+  80.9). One epoch more of joint attention's diagnosis: every stage's TDTBs
+  give 47-50% of their attention to the reference
+  (`tools/tdvit_attention.py`, 20 videos).
 
   The baseline hypothesis is refuted: Swin-T trained with v1's plain pipeline
   scores *more*, 51.1 / 79.4 / 57.0 (VID 79.9), than with Swin's

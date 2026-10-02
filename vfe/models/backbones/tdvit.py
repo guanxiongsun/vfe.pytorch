@@ -11,6 +11,13 @@ Table 2). Each stage runs its Swin blocks (``'s'``) first and its TDTBs
 ``('st', 'st', 'sssttt', 'st')``. The advanced variants (TDViT-T+, ...) add two
 more TDTBs at the end of stage 3.
 
+The paper's TDTB (``attention='cross'``) attends to the reference alone, so
+half of TDViT-T's blocks no longer mix the frame's own tokens; trained here,
+it falls behind a Swin-T trained the same way. With ``attention='joint'`` a
+query attends over its own window and the reference's together, with no new
+parameter; that version passes both Swin-T and the paper's TDViT-T, and the
+configs use it (``docs/tdvit-plan.md``).
+
 Where ``f^R`` comes from:
 
 * **Inference, one frame at a time** (Sec. 3.2). Each TDTB keeps a memory of
@@ -462,8 +469,20 @@ class TDViT(SwinTransformer):
             ``'default'``, torch's initialisation (the authors' code);
             ``'zero'``, the output projections of both residual branches at
             zero, so each extra block starts as the identity and the network
-            as TDViT without them.
+            as TDViT without them; ``'copy'``, each a copy of the pretrained
+            block as far before it as there are extra blocks (TDViT-T+:
+            stage 3's blocks 4 and 5 into 6 and 7), so they start as working
+            blocks with the same window shifts.
         temporal_dilations: ``D_t`` per stage.
+        reference_mode: how the training references' maps are formed.
+            ``'spatial'``, the authors' code: a reference passes through the
+            TDTBs attending to itself, so the maps a TDTB receives are Swin
+            maps, where at test time the memory holds maps computed online,
+            every TDTB attending to its reference -- a mismatch that grows
+            with each TDTB in a row (TDViT-S has nine). ``'paired'``: at every
+            TDTB the key frame attends over its reference and the reference,
+            without gradients, over the key frame, so both sides' maps are
+            formed alike (needs ``memory_feature='input'``).
         memory_sampling, memory_feature, memory_reuse, attention,
         temporal_bias: :class:`TDTB`'s.
         Other arguments are :class:`~vfe.models.backbones.SwinTransformer`'s;
@@ -473,12 +492,16 @@ class TDViT(SwinTransformer):
     def __init__(self, layout: Sequence[str] = ("st", "st", "sssttt", "st"),
                  extra_tdtbs: Sequence[int] | None = None, extra_init: str = "default",
                  temporal_dilations: Sequence[int] = (4, 8, 16, 32),
-                 memory_sampling: str = "earliest", memory_feature: str = "input",
-                 memory_reuse: int | None = None, attention: str = "cross",
-                 temporal_bias: bool = False, depths: Sequence[int] | None = None,
-                 **kwargs):
-        if extra_init not in ("default", "zero"):
-            raise ValueError(f"extra_init must be 'default' or 'zero', got {extra_init!r}")
+                 reference_mode: str = "spatial", memory_sampling: str = "earliest",
+                 memory_feature: str = "input", memory_reuse: int | None = None,
+                 attention: str = "cross", temporal_bias: bool = False,
+                 depths: Sequence[int] | None = None, **kwargs):
+        if extra_init not in ("default", "zero", "copy"):
+            raise ValueError(f"extra_init must be 'default', 'zero' or 'copy', got {extra_init!r}")
+        if reference_mode not in ("spatial", "paired"):
+            raise ValueError(f"reference_mode must be 'spatial' or 'paired', got {reference_mode!r}")
+        if reference_mode == "paired" and memory_feature != "input":
+            raise ValueError("reference_mode='paired' needs memory_feature='input'")
         num_stages = len(layout)
         extra_tdtbs = tuple(extra_tdtbs) if extra_tdtbs is not None else (0,) * num_stages
         if len(temporal_dilations) != num_stages or len(extra_tdtbs) != num_stages:
@@ -496,6 +519,7 @@ class TDViT(SwinTransformer):
         ]
         super().__init__(depths=layout_depths, stage_cfgs=stage_cfgs, **kwargs)
         self.temporal_dilations = tuple(temporal_dilations)
+        self.reference_mode = reference_mode
         self.memory_feature = memory_feature
         self.extra_tdtbs = extra_tdtbs
         self.extra_init = extra_init
@@ -505,13 +529,27 @@ class TDViT(SwinTransformer):
 
     def init_weights(self) -> None:
         super().init_weights()
-        if self.extra_init != "zero":
+        if self.extra_init == "default":
             return
         for stage, num_extra in zip(self.stages, self.extra_tdtbs, strict=True):
-            for block in stage.blocks[len(stage.blocks) - num_extra:]:
-                for linear in (block.attn.w_msa.proj, block.ffn.layers[1]):
-                    nn.init.zeros_(linear.weight)
-                    nn.init.zeros_(linear.bias)
+            if not num_extra:
+                continue
+            n = len(stage.blocks)
+            extra = stage.blocks[n - num_extra:]
+            if self.extra_init == "zero":
+                for block in extra:
+                    for linear in (block.attn.w_msa.proj, block.ffn.layers[1]):
+                        nn.init.zeros_(linear.weight)
+                        nn.init.zeros_(linear.bias)
+                continue
+            if n < 2 * num_extra:
+                raise ValueError(f"extra_init='copy' needs {num_extra} blocks before the "
+                                 f"{num_extra} extra ones; the stage has {n - num_extra}")
+            sources = stage.blocks[n - 2 * num_extra : n - num_extra]
+            with torch.no_grad():
+                for block, source in zip(extra, sources, strict=True):
+                    for name, param in source.named_parameters():
+                        block.get_parameter(name).copy_(param)
 
     def train(self, mode: bool = True):
         super().train(mode)
@@ -571,10 +609,59 @@ class TDViT(SwinTransformer):
         return maps
 
     def forward(self, x: torch.Tensor, ref_img: torch.Tensor | None = None) -> list[torch.Tensor]:
-        if ref_img is None and self.training:
-            raise ValueError("TDViT trains with reference frames, one per stage")
-        refs = self.reference_maps(ref_img) if ref_img is not None else None
-        return self._run(x, refs, online=refs is None)
+        if ref_img is None:
+            if self.training:
+                raise ValueError("TDViT trains with reference frames, one per stage")
+            return self._run(x, None, online=True)
+        if self.reference_mode == "paired":
+            return self._run_paired(x, ref_img)
+        return self._run(x, self.reference_maps(ref_img), online=False)
+
+    def _run_paired(self, img: torch.Tensor, ref_img: torch.Tensor) -> list[torch.Tensor]:
+        """Training with ``reference_mode='paired'``: the key frame and its
+        references advance block by block together. At a TDTB the key frame
+        attends over its stage's reference map (the reference's input to the
+        block) and every reference still in the batch attends, without
+        gradients, over the key frame's input to the block; a stage's
+        reference leaves the batch after that stage's last TDTB, as in
+        :meth:`reference_maps`."""
+        B, num_refs = ref_img.shape[:2]
+        if num_refs != len(self.stages):
+            raise ValueError(f"TDViT needs one reference per stage ({len(self.stages)}), "
+                             f"got {num_refs}")
+        x, hw_shape = self._embed(img)
+        with torch.no_grad():  # stage-major: the first B rows are the current stage's references
+            r, _ = self._embed(ref_img.transpose(0, 1).flatten(0, 1))
+        outs = []
+        for i, stage in enumerate(self.stages):
+            tdtbs = [j for j, block in enumerate(stage.blocks) if isinstance(block, TDTB)]
+            for j, block in enumerate(stage.blocks):
+                if j in tdtbs:
+                    with torch.no_grad():
+                        kv = block.key_values(r[:B], hw_shape)
+                    key_input = x.detach()
+                    x = block(x, hw_shape, kv=kv)
+                    if j == tdtbs[-1]:
+                        r = r[B:]
+                    if len(r):
+                        with torch.no_grad():
+                            r = block(r, hw_shape, ref=key_input.repeat(len(r) // B, 1, 1))
+                else:
+                    x = block(x, hw_shape)
+                    if len(r):
+                        with torch.no_grad():
+                            r = block(r, hw_shape)
+            if not tdtbs:
+                r = r[B:]
+            if i in self.out_indices:
+                out = getattr(self, f"norm{i}")(x)
+                outs.append(out.view(-1, *hw_shape, self.num_features[i]).permute(0, 3, 1, 2).contiguous())
+            if stage.downsample is not None:
+                if len(r):
+                    with torch.no_grad():
+                        r, _ = stage.downsample(r, hw_shape)
+                x, hw_shape = stage.downsample(x, hw_shape)
+        return outs
 
     def forward_spatial(self, x: torch.Tensor) -> list[torch.Tensor]:
         """Frames on their own, every TDTB attending to its frame (a Swin

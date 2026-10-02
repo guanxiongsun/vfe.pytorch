@@ -666,7 +666,82 @@ def test_zero_initialised_extra_tdtbs_start_as_the_identity(attention):
     sum(o.square().mean() for o in plus(img, refs)).backward()
     assert plus.stages[2].blocks[6].attn.w_msa.proj.weight.grad.abs().sum() > 0
     with pytest.raises(ValueError, match="extra_init"):
-        TDViT(**TINY, extra_init="copy")
+        TDViT(**TINY, extra_init="random")
+
+
+@pytest.mark.parametrize("attention", ["cross", "joint"])
+def test_copied_extra_tdtbs_start_as_the_blocks_before_them(attention):
+    torch.manual_seed(0)
+    plus = TDViT(**TINY, attention=attention, extra_tdtbs=(0, 0, 2, 0), extra_init="copy")
+    plus.init_weights()
+    blocks = plus.stages[2].blocks
+    for target, source in ((blocks[6], blocks[4]), (blocks[7], blocks[5])):
+        for name, param in source.named_parameters():
+            torch.testing.assert_close(target.get_parameter(name), param)
+        assert target.attn.shift_size == source.attn.shift_size
+    assert blocks[6].attn.shift_size == 0 and blocks[7].attn.shift_size > 0
+    assert not torch.equal(blocks[6].attn.w_msa.qkv.weight, blocks[7].attn.w_msa.qkv.weight)
+    with pytest.raises(ValueError, match="copy"):
+        TDViT(**TINY, extra_tdtbs=(0, 0, 0, 3), extra_init="copy").init_weights()
+
+
+# ---- the paired reference pass ------------------------------------------------------------
+
+
+@pytest.mark.parametrize("attention", ["cross", "joint"])
+def test_paired_references_equal_to_the_frame_give_the_spatial_network(attention):
+    tdvit = tiny_tdvit(attention=attention, reference_mode="paired").eval()
+    img = torch.randn(2, 3, 72, 104)
+    refs = img.unsqueeze(1).repeat(1, 4, 1, 1, 1)
+    with torch.no_grad():
+        for a, b in zip(tdvit(img, refs), tdvit.forward_spatial(img), strict=True):
+            torch.testing.assert_close(a, b, rtol=1e-5, atol=1e-5)
+
+
+def test_paired_pass_forms_the_reference_maps_with_the_key_frame():
+    tdvit = tiny_tdvit(layout=("tt",), temporal_dilations=(4,), num_heads=[1], out_indices=(0,),
+                       attention="joint", reference_mode="paired").eval()
+    img, ref = torch.randn(1, 3, 72, 104), torch.randn(1, 1, 3, 72, 104)
+    b0, b1 = tdvit.stages[0].blocks
+    with torch.no_grad():
+        x, hw = tdvit._embed(img)
+        r, _ = tdvit._embed(ref[:, 0])
+        x1 = b0(x, hw, ref=r)  # the key frame attends over the reference's input to the block
+        r1 = b0(r, hw, ref=x)  # the reference attends over the key frame's
+        x2 = b1(x1, hw, ref=r1)  # the second TDTB receives maps formed alike on both sides
+        expected = tdvit.norm0(x2).view(1, *hw, -1).permute(0, 3, 1, 2)
+        torch.testing.assert_close(tdvit(img, ref)[0], expected, rtol=1e-5, atol=1e-5)
+
+
+def test_paired_and_spatial_references_agree_until_a_reference_meets_a_tdtb():
+    img, refs = torch.randn(1, 3, 72, 104), torch.randn(1, 4, 3, 72, 104)
+
+    def both(layout):
+        spatial = tiny_tdvit(layout=layout, attention="joint").eval()
+        paired = tiny_tdvit(layout=layout, attention="joint", reference_mode="paired").eval()
+        with torch.no_grad():
+            return spatial(img, refs), paired(img, refs)
+
+    # One TDTB, last of all: its reference has passed Swin blocks only -> the same network.
+    for a, b in zip(*both(("ss", "ss", "ss", "st")), strict=True):
+        torch.testing.assert_close(a, b)
+    # TDTBs in every stage: stage 1 agrees (its reference saw Swin blocks only); from
+    # stage 2 on the references have passed a TDTB -- attending to themselves in one
+    # mode, to the key frame in the other -- so the maps the TDTBs receive differ.
+    a, b = both(("st", "st", "sssttt", "st"))
+    torch.testing.assert_close(a[0], b[0])
+    assert all(not torch.allclose(x, y, atol=1e-4) for x, y in zip(a[1:], b[1:], strict=True))
+
+
+def test_paired_training_reaches_every_parameter():
+    tdvit = tiny_tdvit(attention="joint", reference_mode="paired").train()
+    outs = tdvit(torch.randn(1, 3, 72, 104), torch.randn(1, 4, 3, 72, 104))
+    sum(o.square().mean() for o in outs).backward()
+    assert all(p.grad is not None for p in tdvit.parameters())
+    with pytest.raises(ValueError, match="paired"):
+        TDViT(**TINY, reference_mode="paired", memory_feature="output")
+    with pytest.raises(ValueError, match="reference_mode"):
+        TDViT(**TINY, reference_mode="online")
 
 
 @pytest.mark.parametrize("backbone", ["swin", "cross", "joint"])

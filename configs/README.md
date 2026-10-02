@@ -1,6 +1,6 @@
 # Configs
 
-Seven trainable configs, plus the `_base_` files they inherit. The syntax is
+The trainable configs, plus the `_base_` files they inherit. The syntax is
 MMDetection's, and `vfe.config.Config` resolves it identically — that
 equivalence is itself one of the parity checks (`run_parity.py check config`).
 
@@ -25,6 +25,39 @@ size prior counts frames. The size prior is inference-only, so one trained
 model gives both of the paper's rows: as configured (`size_prior.interval=7`)
 and LPN-only (`--cfg-options model.size_prior=None`). It evaluates with both
 the VID metric and COCO-style AP, which is what the paper reports.
+
+## TDViT
+
+[`vid/tdvit/`](vid/tdvit) holds TDViT (ECCV 2022) and its baselines: Faster
+R-CNN with an FPN on ImageNet VID, 3 epochs at batch 8, AdamW at 2.5e-5 from
+ImageNet-1K Swin weights, with Swin's augmentation unless the name says
+otherwise. No checkpoint is published yet; the results are in the
+[README](../README.md#tdvit) and [`docs/tdvit-plan.md`](../docs/tdvit-plan.md).
+
+| Config | Model |
+| :-- | :-- |
+| [`frcnn_swint_fpn_3x.py`](vid/tdvit/frcnn_swint_fpn_3x.py) | Swin-T, the single-frame baseline (Table 2) |
+| [`tdvit_t_frcnn_fpn_3x.py`](vid/tdvit/tdvit_t_frcnn_fpn_3x.py) | TDViT-T as published: a temporal block attends to its reference alone |
+| [`tdvit_t_joint_frcnn_fpn_3x.py`](vid/tdvit/tdvit_t_joint_frcnn_fpn_3x.py) | **TDViT-T with joint attention** -- the one to use |
+| [`tdvit_tplus_frcnn_fpn_3x.py`](vid/tdvit/tdvit_tplus_frcnn_fpn_3x.py) | TDViT-T+ as published: two more temporal blocks in stage 3, from torch's initialisation |
+| [`tdvit_tplus_joint_frcnn_fpn_3x.py`](vid/tdvit/tdvit_tplus_joint_frcnn_fpn_3x.py) | TDViT-T+ with joint attention, the two new blocks starting as the identity |
+| [`frcnn_swins_fpn_3x.py`](vid/tdvit/frcnn_swins_fpn_3x.py), [`tdvit_s_joint_frcnn_fpn_3x.py`](vid/tdvit/tdvit_s_joint_frcnn_fpn_3x.py) | Swin-S, and TDViT-S with joint attention |
+| [`frcnn_swinb_fpn_3x.py`](vid/tdvit/frcnn_swinb_fpn_3x.py), [`tdvit_b_joint_frcnn_fpn_3x.py`](vid/tdvit/tdvit_b_joint_frcnn_fpn_3x.py) | Swin-B and TDViT-B: they build, but were never trained |
+| [`frcnn_swint_fpn_3x_v1aug.py`](vid/tdvit/frcnn_swint_fpn_3x_v1aug.py), [`tdvit_t_joint_frcnn_fpn_3x_v1aug.py`](vid/tdvit/tdvit_t_joint_frcnn_fpn_3x_v1aug.py) | the two tiny models on v1's plain pipeline (resize to 600, flip), which scores higher |
+| [`selsa_swint_fpn_3x.py`](vid/tdvit/selsa_swint_fpn_3x.py), [`selsa_tdvit_t_joint_fpn_3x.py`](vid/tdvit/selsa_tdvit_t_joint_fpn_3x.py) | SELSA\* (Table 3: SELSA with RDN's top-75 reference proposals) on Swin-T and on TDViT-T with joint attention |
+| [`selsa_tdvit_t_fpn_3x.py`](vid/tdvit/selsa_tdvit_t_fpn_3x.py) | SELSA\* on TDViT-T as published; never trained |
+
+TDViT's test set keeps each video's frames in order, first frame first: the
+detector resets the backbone's memories at `frame_id == 0` and fills them as
+the video goes on. The memory is a test-time setting of one trained model, so
+one checkpoint gives the paper's Table 8 and more through `--cfg-options`:
+`model.detector.backbone.memory_sampling=nms` (or `patch_shuffle`,
+`channel_shuffle`), `model.detector.backbone.memory_reuse=1` (a new reference
+every frame), `model.detector.backbone.temporal_dilations=(1,2,4,8)`, and
+`model.online=False` (the memory off: the weights as a still-image detector).
+`model.detector.backbone.fused_attention=True` runs the attention through
+PyTorch's fused kernel, the same detections faster; it is off by default so
+Swin stays bit-identical to its reference.
 
 ## Two things the configs do not say
 
@@ -59,6 +92,8 @@ checkpoint is published. In 1.x this file existed but was empty.
 | [`_base_/datasets/vid/imagenet_vid_multi_frame.py`](_base_/datasets/vid/imagenet_vid_multi_frame.py) | ImageNet VID + DET, reference-frame sampling, the train and test pipelines |
 | [`_base_/models/vid/faster_rcnn_r50_dc5.py`](_base_/models/vid/faster_rcnn_r50_dc5.py) | the Faster R-CNN DC5 detector MAMBA wraps |
 | [`_base_/models/vid/fcos_r50_fpn.py`](_base_/models/vid/fcos_r50_fpn.py) | the FCOS detector EOVOD wraps (caffe-style ResNet, FPN P3–P7, GroupNorm head) |
+| [`_base_/models/vid/faster_rcnn_r50_fpn.py`](_base_/models/vid/faster_rcnn_r50_fpn.py) | the Faster R-CNN FPN detector TDViT and its Swin baselines wrap (from v1) |
 
-Configs for models this release does not implement — SELSA, the single-frame
-baselines, and MMDetection's 700-odd COCO configs — are at the `v1.0.0` tag.
+Configs for models this release does not implement — SELSA on ResNet, the
+ResNet single-frame baselines, and MMDetection's 700-odd COCO configs — are at
+the `v1.0.0` tag.
