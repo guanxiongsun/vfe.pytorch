@@ -9,12 +9,18 @@ reference implementations of
 - **[STPN](https://arxiv.org/abs/2402.02574)** — Spatio-temporal Prompting Network (ICCV 2023)
 - **[EOVOD](https://arxiv.org/abs/2402.09241)** — Efficient One-stage Video Object Detection by
   Exploiting Temporal Consistency (ECCV 2022), on FCOS and YOLOX
+- **[TDViT](https://arxiv.org/abs/2402.09257)** — Temporal Dilated Video Transformer for Dense
+  Video Tasks (ECCV 2022)
 
 together with the ImageNet VID data and annotations needed to train and
 evaluate them, since the official dataset links are no longer reachable.
 
 ## News
 
+- **2026-10-02** — TDViT implemented from its paper, whose code was never
+  released, and reproduced: TDViT-T 50.6 AP and TDViT-T+ 51.4 against the
+  paper's 49.1 and 50.9, with one change to the temporal block that the
+  reproduction called for ([TDViT](#tdvit)).
 - **2026-10-01** — EOVOD reproduced on FCOS: 54.0 AP with LPN and 53.8 with
   LPN + SPN, against the paper's 54.1 and 53.8. EOVOD also runs on YOLOX,
   ported from MMDetection and checked against it. MAMBA's pixel level, which
@@ -42,10 +48,11 @@ evaluate them, since the official dataset links are no longer reachable.
   2.3e-13 in float64, and its training pipeline bit for bit.
 - **Retrained, not only ported.** MAMBA's and STPN's released checkpoints score
   within 0.02 AP50 of their published results here. Trained from scratch here,
-  MAMBA reaches 84.06 AP50 (published: 83.82), STPN 84.54 (85.15) and EOVOD
-  54.0 AP (the paper: 54.1).
+  MAMBA reaches 84.06 AP50 (published: 83.82), STPN 84.54 (85.15), EOVOD
+  54.0 AP (the paper: 54.1) and TDViT-T 50.6 AP (49.1).
 - **What the original releases left out:** MAMBA's pixel level, EOVOD's
-  location and size priors (LPN and SPN), and EOVOD on YOLOX.
+  location and size priors (LPN and SPN), EOVOD on YOLOX, and TDViT
+  altogether, whose code was never published.
 - **Exact multi-GPU training.** With BatchNorm frozen, `--accumulate k` makes
   `n` GPUs train exactly as `n * k` did, and `--resume-from auto` continues a
   run exactly.
@@ -59,6 +66,9 @@ ImageNet VID validation, AP50 and the standard motion-speed breakdown:
 | Model | Backbone | AP50 | AP (fast) | AP (med) | AP (slow) | |
 | :-- | :-- | :--: | :--: | :--: | :--: | :-- |
 | Faster R-CNN | ResNet-101 | 76.7 | 52.3 | 74.1 | 84.9 | [reference](https://github.com/Scalsol/mega.pytorch#main-results) |
+| Faster R-CNN | Swin-T | 79.5 | 57.3 | 78.8 | 85.7 | [config](configs/vid/tdvit/frcnn_swint_fpn_3x.py) |
+| **Faster R-CNN** | **TDViT-T** | **80.8** | 59.5 | 80.5 | 87.3 | [config](configs/vid/tdvit/tdvit_t_joint_frcnn_fpn_3x.py) |
+| **Faster R-CNN** | **TDViT-T+** | **81.4** | 57.7 | 80.0 | 89.0 | [config](configs/vid/tdvit/tdvit_tplus_joint_frcnn_fpn_3x.py) |
 | SELSA | ResNet-101 | 81.5 | — | — | — | [reference](https://github.com/open-mmlab/mmtracking/tree/master/configs/vid/selsa) |
 | MEGA | ResNet-101 | 82.9 | 62.7 | 81.6 | 89.4 | [reference](https://github.com/Scalsol/mega.pytorch) |
 | **MAMBA** | ResNet-101 | **83.8** | 65.3 | 83.8 | 89.5 | [config](configs/vid/mamba) · [model](https://huggingface.co/guanxiongsun/vfe.pytorch/tree/main/work_dirs/mamba_r101_dc5_6x) |
@@ -121,6 +131,44 @@ setting of the same model. The checkpoint released with the original EOVOD code
 scores 54.0 / 79.7 / 59.3 here. How each number was reached:
 [docs/eovod-plan.md](docs/eovod-plan.md) and
 [docs/eovod-yolox-plan.md](docs/eovod-yolox-plan.md).
+
+### TDViT
+
+ImageNet VID validation, Faster R-CNN with an FPN, 3 epochs at batch 8 from
+ImageNet-1K Swin-T weights with Swin's augmentation; COCO-style AP as the
+paper's Table 2 reports it, and the VID metric:
+
+| Backbone | | AP | AP50 | AP75 | VID AP50 | paper (AP / AP50 / AP75) |
+| :-- | :-- | :--: | :--: | :--: | :--: | :--: |
+| Swin-T | | 50.2 | 79.0 | 55.4 | 79.5 | 47.1 / 77.2 / 51.5 |
+| TDViT-T | as published | 46.0 | 75.7 | 49.4 | 76.2 | 49.1 / 78.5 / 52.7 |
+| | joint attention | 50.6 | 80.3 | 56.0 | 80.8 | |
+| TDViT-T+ | joint attention, new blocks copied | **51.4** | **80.8** | **57.3** | **81.4** | 50.9 / 79.9 / 55.7 |
+
+A second seed gives Swin-T 50.6 / 79.0 and TDViT-T 50.6 / 79.7: TDViT-T's
+AP50 gain holds (+0.7 to +1.3), its AP gain (0.0 to +0.4) is within the
+run-to-run spread of 0.4. Trained instead with v1's plain pipeline (resize
+and flip, [`*_v1aug.py`](configs/vid/tdvit)), both tiny models score higher
+and the gap widens: Swin-T 51.1 / 79.4 / 57.0, TDViT-T 51.8 / 81.2 / 57.6
+(VID AP50 79.9 and 81.7).
+
+TDViT is implemented from its paper and the backbone of the authors' CVPR
+2022 supplementary code; its repository was never released. As published, a
+temporal block attends from the frame to a reference frame alone, which gives
+up the frame's own spatial attention in half of TDViT-T's blocks: trained
+here next to a Swin-T on the same recipe, it trains worse and tests 4.2 AP
+lower, most of it on fast objects. With one change — each temporal block
+attends over its own window and the reference's together (`attention='joint'`,
+no new parameter) — TDViT-T passes both the Swin-T and the paper's TDViT-T,
+at Swin-T's size and, with `fused_attention=True`, its speed (52.0 against
+51.8 FPS on a GH200). TDViT-T+'s two extra blocks have no ImageNet weights
+and learn nothing at this learning rate from a random start; copied from the
+pretrained blocks before them (`extra_init='copy'`) they add 0.8 AP. The
+Swin-T trained here is 3.1 AP stronger than the paper's. SELSA on TDViT-T
+reproduces the paper's Table 3 (VID AP50 83.8 against 83.9), though SELSA on
+Swin-T, which the paper does not report, scores 84.5. The small and base
+variants are configured but not yet tuned. How every number was reached:
+[docs/tdvit-plan.md](docs/tdvit-plan.md).
 
 ## Install
 

@@ -34,16 +34,18 @@
   79.0), at Swin-T's size and, with the fused kernel, its speed; on v1's
   plain pipeline both score higher (51.1 and 51.8). Table 8's order is
   reproduced; the reference's distance at test is worth half a point.
-- TDViT-T+ equals TDViT-T so far (50.7): at this learning rate its two new
-  blocks do not train from torch's initialisation or from the identity;
-  copied from pretrained blocks they train at once (3-epoch run pending).
+- TDViT-T+ reaches **51.4 / 80.8** (VID 81.4) once its two new blocks start
+  as copies of pretrained blocks (`extra_init='copy'`); from torch's
+  initialisation or the identity they learn nothing at this learning rate
+  and TDViT-T+ equals TDViT-T. A second seed of Swin-T and TDViT-T puts the
+  run-to-run spread at 0.4 AP / 0.6 AP50: TDViT-T's AP50 gain holds in both
+  seeds, its AP gain is within the spread. The paired reference pass
+  changes nothing for the tiny models and stays an option for the small.
   SELSA on TDViT-T reproduces the paper's 83.9 (83.8) but SELSA on Swin-T
   scores 84.5; no further SELSA work. S had one round (Swin-S 56.7, TDViT-S
   55.2, its diagnosis in the log) and waits until T is final; B is dropped.
-- Pending (evening of 2026-10-02): seed 2 of Swin-T and TDViT-T at 3
-  epochs; TDViT-T+ with copied blocks; TDViT-T and TDViT-T+ with the paired
-  reference pass. These fix the two open settings -- `reference_mode` and
-  the T+ initialisation -- then the README and the PR.
+- The tiny models' settings are final (Progress log, evening of
+  2026-10-02); what is left is the README and the PR.
 
 ## The paper
 
@@ -209,8 +211,9 @@ run of the real config's pipelines on synthetic JPEGs feeds the detector.
   Target: Swin-T 47.1 / 77.2, TDViT-T 49.1 / 78.5 -- the gain (+2.0 AP, +1.3
   AP50) matters more than the absolute numbers. Done: Swin-T 50.2 / 79.0,
   TDViT-T (joint attention) 50.6 / 80.3; the paper's block 46.0 / 75.7.
-- [x] **T4 -- TDViT-T+** (50.9 / 79.9): 50.7 / 80.4, equal to TDViT-T here
-  (Progress log, 2026-10-02); a last initialisation under test.
+- [x] **T4 -- TDViT-T+** (50.9 / 79.9): 51.4 / 80.8 with its new blocks
+  copied from pretrained ones; 50.7, equal to TDViT-T, from torch's
+  initialisation or the identity (Progress log, 2026-10-02).
 - [x] **T5 -- ablations:** sampling strategies (inference only: one trained
   model, `--cfg-options model.detector.backbone.memory_sampling=...`),
   dilations and schemes (retraining). Done: Table 8's order reproduced;
@@ -236,6 +239,51 @@ run of the real config's pipelines on synthetic JPEGs feeds the detector.
   were trained.
 
 ## Progress log
+
+- **2026-10-02 (evening: the tiny models' settings are final)** — Full val,
+  3 epochs, Swin's augmentation, the paper's test protocol:
+
+  | | AP | AP50 | AP75 | VID AP50 | fast | medium | slow |
+  | :-- | --: | --: | --: | --: | --: | --: | --: |
+  | Swin-T, seed 1 | 50.2 | 79.0 | 55.4 | 79.5 | 57.3 | 78.8 | 85.7 |
+  | Swin-T, seed 2 | 50.6 | 79.0 | 56.3 | 79.6 | 57.9 | 78.8 | 85.1 |
+  | TDViT-T, seed 1 | 50.6 | 80.3 | 56.0 | 80.8 | **59.5** | **80.5** | 87.3 |
+  | TDViT-T, seed 2 | 50.6 | 79.7 | 56.5 | 80.3 | 58.0 | 79.6 | 86.7 |
+  | TDViT-T, paired reference pass | 50.6 | 79.8 | 56.2 | 80.4 | 58.3 | 80.2 | 86.2 |
+  | TDViT-T+, new blocks copied | 51.4 | **80.8** | 57.3 | **81.4** | 57.7 | 80.0 | **89.0** |
+  | TDViT-T+, copied, paired reference pass | **51.5** | **80.8** | **57.5** | **81.4** | 58.2 | 80.1 | 88.7 |
+  | *the paper: Swin-T* | *47.1* | *77.2* | *51.5* | | | | |
+  | *the paper: TDViT-T* | *49.1* | *78.5* | *52.7* | | | | |
+  | *the paper: TDViT-T+* | *50.9* | *79.9* | *55.7* | | | | |
+
+  **Noise.** Two seeds of one model differ by up to 0.4 AP, 0.6 AP50 and 0.5
+  VID AP50 at 3 epochs. TDViT-T's lead over Swin-T is +0.4 and 0.0 AP, +1.3
+  and +0.7 AP50, +1.3 and +0.7 VID AP50 in the two seeds: the AP50 gain
+  holds, the AP gain is within the spread. (On the plain pipeline, one
+  seed: +0.7 AP, +1.8 AP50.)
+
+  **The paired reference pass changes nothing for the tiny models:**
+  TDViT-T 50.6 / 79.8 against 50.6 / 80.3 and 79.7, TDViT-T+ 51.5 against
+  51.4. Their references pass too few TDTBs for the mismatch to tell;
+  `reference_mode` stays `'spatial'`, the authors' way, and the option
+  remains for the small models, where the mismatch was diagnosed.
+
+  **TDViT-T+ works once its new blocks start as blocks.** Copied from the
+  two pretrained blocks before them (`extra_init='copy'`), they train at
+  once (the loss over iterations 1,000-3,000: 0.2514 against TDViT-T's
+  0.2603, where from torch's initialisation or the identity it was 0.256 /
+  0.255 and the end result equal to TDViT-T), and TDViT-T+ reaches 51.4 /
+  80.8 / 57.3, VID 81.4: +0.8 AP over TDViT-T, slow objects +1.7, and above
+  the paper's TDViT-T+ by 0.5 AP, 0.9 AP50 and 1.6 AP75.
+  `tdvit_tplus_joint_frcnn_fpn_3x.py` now copies.
+
+  **The settings, final for T and T+:** joint attention; the paper's
+  dilations 4 / 8 / 16 / 32 and split layouts; the spatial reference pass;
+  T+'s new blocks copied; Swin's augmentation as the main recipe, with v1's
+  plain pipeline as the stronger variant; at test the paper's protocol (a
+  reference held `D_t` frames), near references as an optional row (+0.6
+  AP, -0.2 VID AP50); `fused_attention` for speed. S follows by config when
+  wanted, with `reference_mode='paired'` the first thing to try there.
 
 - **2026-10-02 (TDViT-S: where it loses, and a paired reference pass)** —
   TDViT-S trails its Swin-S by 1.5 AP where TDViT-T leads its Swin-T by

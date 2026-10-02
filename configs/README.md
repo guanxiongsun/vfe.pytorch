@@ -40,7 +40,7 @@ otherwise. No checkpoint is published yet; the results are in the
 | [`tdvit_t_frcnn_fpn_3x.py`](vid/tdvit/tdvit_t_frcnn_fpn_3x.py) | TDViT-T as published: a temporal block attends to its reference alone |
 | [`tdvit_t_joint_frcnn_fpn_3x.py`](vid/tdvit/tdvit_t_joint_frcnn_fpn_3x.py) | **TDViT-T with joint attention** -- the one to use |
 | [`tdvit_tplus_frcnn_fpn_3x.py`](vid/tdvit/tdvit_tplus_frcnn_fpn_3x.py) | TDViT-T+ as published: two more temporal blocks in stage 3, from torch's initialisation |
-| [`tdvit_tplus_joint_frcnn_fpn_3x.py`](vid/tdvit/tdvit_tplus_joint_frcnn_fpn_3x.py) | TDViT-T+ with joint attention, the two new blocks starting as the identity |
+| [`tdvit_tplus_joint_frcnn_fpn_3x.py`](vid/tdvit/tdvit_tplus_joint_frcnn_fpn_3x.py) | TDViT-T+ with joint attention, the two new blocks copied from the pretrained blocks before them |
 | [`frcnn_swins_fpn_3x.py`](vid/tdvit/frcnn_swins_fpn_3x.py), [`tdvit_s_joint_frcnn_fpn_3x.py`](vid/tdvit/tdvit_s_joint_frcnn_fpn_3x.py) | Swin-S, and TDViT-S with joint attention |
 | [`frcnn_swinb_fpn_3x.py`](vid/tdvit/frcnn_swinb_fpn_3x.py), [`tdvit_b_joint_frcnn_fpn_3x.py`](vid/tdvit/tdvit_b_joint_frcnn_fpn_3x.py) | Swin-B and TDViT-B: they build, but were never trained |
 | [`frcnn_swint_fpn_3x_v1aug.py`](vid/tdvit/frcnn_swint_fpn_3x_v1aug.py), [`tdvit_t_joint_frcnn_fpn_3x_v1aug.py`](vid/tdvit/tdvit_t_joint_frcnn_fpn_3x_v1aug.py) | the two tiny models on v1's plain pipeline (resize to 600, flip), which scores higher |
