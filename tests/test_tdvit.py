@@ -667,3 +667,25 @@ def test_zero_initialised_extra_tdtbs_start_as_the_identity(attention):
     assert plus.stages[2].blocks[6].attn.w_msa.proj.weight.grad.abs().sum() > 0
     with pytest.raises(ValueError, match="extra_init"):
         TDViT(**TINY, extra_init="copy")
+
+
+@pytest.mark.parametrize("backbone", ["swin", "cross", "joint"])
+def test_fused_attention_matches_the_unfused(backbone):
+    torch.manual_seed(0)
+    if backbone == "swin":
+        plain = SwinTransformer(depths=[2, 2, 6, 2], **TINY).eval()
+        fused = SwinTransformer(depths=[2, 2, 6, 2], fused_attention=True, **TINY).eval()
+    else:
+        plain = tiny_tdvit(attention=backbone, temporal_bias=backbone == "joint").eval()
+        fused = TDViT(**TINY, attention=backbone, temporal_bias=backbone == "joint",
+                      fused_attention=True).eval()
+        for p in plain.parameters():
+            if p.dim() == 1 and p.shape[0] < 30:  # the temporal biases: make them matter
+                torch.nn.init.normal_(p)
+    fused.load_state_dict(plain.state_dict())
+    assert all(m.fused for m in fused.modules() if hasattr(m, "fused"))
+    video = torch.randn(3, 1, 3, 72, 104)  # padded and shifted windows; online frames
+    with torch.no_grad():
+        for frame in video:
+            for a, b in zip(plain(frame), fused(frame), strict=True):
+                torch.testing.assert_close(a, b, rtol=1e-4, atol=1e-4)

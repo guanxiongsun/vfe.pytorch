@@ -194,10 +194,14 @@ class TemporalWindowMSA(WindowMSA):
         shift mask; the reference's, the temporal bias too."""
         B, num_heads, N, _ = q.shape
         C = num_heads * q.shape[3]
-        attn = (q * self.scale) @ k.transpose(-2, -1)  # (B, heads, N, 2N)
         bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
             N, N, -1).permute(2, 0, 1)
         ref_bias = bias if self.temporal_bias is None else bias + self.temporal_bias.view(-1, 1, 1)
+        if self.fused:
+            return self.fused_attention(
+                q, k, v, torch.cat((bias, ref_bias), dim=-1),
+                None if mask is None else torch.cat((mask, mask), dim=-1))
+        attn = (q * self.scale) @ k.transpose(-2, -1)  # (B, heads, N, 2N)
         attn = attn + torch.cat((bias, ref_bias), dim=-1).unsqueeze(0)
         if mask is not None:
             nW = mask.shape[0]

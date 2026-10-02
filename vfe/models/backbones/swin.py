@@ -41,7 +41,15 @@ __all__ = [
 
 
 class WindowMSA(nn.Module):
-    """Window-based multi-head self-attention with a relative position bias."""
+    """Window-based multi-head self-attention with a relative position bias.
+
+    ``fused`` (set by ``SwinTransformer(fused_attention=True)``) runs the
+    attention through ``F.scaled_dot_product_attention``, the position bias
+    and the shift mask added as one mask: the same function in fewer kernels,
+    not the same floats, so it is off by default.
+    """
+
+    fused: bool = False
 
     def __init__(
         self,
@@ -101,6 +109,8 @@ class WindowMSA(nn.Module):
         num_heads, N, head_dims) -- the projected tokens of :meth:`forward`, or
         TDViT's queries and a reference frame's keys and values -- to the
         output projection, (num_windows*B, N, C)."""
+        if self.fused and not num_prompts:
+            return self.fused_attention(q, k, v, self.position_bias(), mask)
         B, _, N, _ = q.shape
         C = q.shape[1] * q.shape[3]
         q = q * self.scale
@@ -137,6 +147,28 @@ class WindowMSA(nn.Module):
         attn = self.attn_drop(attn)
 
         x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        return self.proj_drop(self.proj(x))
+
+    def position_bias(self) -> torch.Tensor:
+        """The relative position bias of a window, (num_heads, Wh*Ww, Wh*Ww)."""
+        N = self.window_size[0] * self.window_size[1]
+        return (self.relative_position_bias_table[self.relative_position_index.view(-1)]
+                .view(N, N, -1).permute(2, 0, 1).contiguous())
+
+    def fused_attention(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
+                        bias: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
+        """:meth:`attend` in one fused kernel: ``q`` (num_windows*B, heads, N,
+        head_dims) over ``k`` / ``v`` with S tokens, ``bias`` (heads, N, S) and
+        ``mask`` (num_windows, N, S) added to the logits."""
+        B, num_heads, N, head_dims = q.shape
+        attn_mask = bias.unsqueeze(0).to(q.dtype)
+        if mask is not None:
+            # Windows are laid out image by image: repeat the mask per image.
+            attn_mask = attn_mask + mask.unsqueeze(1).repeat(B // mask.shape[0], 1, 1, 1)
+        x = F.scaled_dot_product_attention(
+            q, k, v, attn_mask=attn_mask, scale=self.scale,
+            dropout_p=self.attn_drop.p if self.training else 0.0)
+        x = x.transpose(1, 2).reshape(B, N, num_heads * head_dims)
         return self.proj_drop(self.proj(x))
 
     @staticmethod
@@ -431,6 +463,8 @@ class SwinTransformer(nn.Module):
             off. ``-1`` freezes nothing.
         stage_cfgs: per-stage keyword arguments added to :meth:`make_stage`'s
             (TDViT's block layout and temporal dilation); None for plain Swin.
+        fused_attention: every window attention through one fused kernel
+            (``WindowMSA.fused``): faster, numerically close, not identical.
     """
 
     patch_merging_cls: type[PatchMerging] = PatchMerging
@@ -461,6 +495,7 @@ class SwinTransformer(nn.Module):
         frozen_stages: int = -1,
         init_cfg: dict | None = None,
         stage_cfgs: list[dict] | None = None,
+        fused_attention: bool = False,
     ):
         super().__init__()
         act_cfg = act_cfg or {"type": "GELU"}
@@ -541,6 +576,10 @@ class SwinTransformer(nn.Module):
         self.num_features = [int(embed_dims * 2**i) for i in range(num_layers)]
         for i in out_indices:
             self.add_module(f"norm{i}", build_norm_layer(norm_cfg, self.num_features[i])[1])
+        if fused_attention:
+            for module in self.modules():
+                if isinstance(module, WindowMSA):
+                    module.fused = True
 
     def make_stage(self, **kwargs) -> nn.Module:
         """One stage from :class:`SwinBlockSequence`'s arguments; subclasses
