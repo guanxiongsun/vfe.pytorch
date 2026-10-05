@@ -39,7 +39,7 @@ evaluate them, since the official dataset links are no longer reachable.
   [what changed in 2.0](#what-changed-in-20).
 - **Checked against the original.** Every layer of the port is compared,
   tensor by tensor, with frozen outputs of the original implementation
-  ([docs/parity.md](docs/parity.md)).
+  ([tools/checks/](tools/checks)).
 - **Retrained, not only ported.** Released checkpoints score within 0.02 AP50
   of their published results here, and every model is also trained from
   scratch with this code: STPN lands 0.6 AP50 below its paper, the others
@@ -145,9 +145,8 @@ python tools/checks/run_parity.py check --all
 ```
 
 The second command re-runs every layer of the port against frozen outputs of
-the original implementation and compares them tensor by tensor. See
-[docs/parity.md](docs/parity.md) for how that works, what it does and does not
-claim, and how to rebuild the oracle. FCOS and YOLOX, ported for EOVOD, have
+the original implementation and compares them tensor by tensor; the docstring
+of [`run_parity.py`](tools/checks/run_parity.py) explains how. FCOS and YOLOX, ported for EOVOD, have
 their own two-environment checks: `tools/checks/parity_fcos.py`,
 `parity_yolox.py` and `parity_yolox_pipeline.py`.
 

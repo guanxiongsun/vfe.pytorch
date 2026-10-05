@@ -31,9 +31,7 @@ Started from COCO, YOLOX-M is already stronger than the paper's, and the
 location prior adds 0.6 AP to it, against 4.2 on FCOS; trained alone on still
 images, as YOLOX usually is, it scores 56.1. The size prior is a test-time
 setting of the same model. The checkpoint released with the original EOVOD code
-scores 54.0 / 79.7 / 59.3 here. How each number was reached:
-[docs/eovod-plan.md](../../../docs/eovod-plan.md) and
-[docs/eovod-yolox-plan.md](../../../docs/eovod-yolox-plan.md).
+scores 54.0 / 79.7 / 59.3 here.
 
 ## Configs
 

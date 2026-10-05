@@ -51,6 +51,5 @@ torchrun --standalone --nproc_per_node=4 -m vfe.cli.train \
 full model also enhances the feature map before the RPN, and that pixel level
 was never released ([#4](https://github.com/guanxiongsun/vfe.pytorch/issues/4)).
 It is implemented here: after one epoch the full model scores 75.6 AP50
-against 72.1 for the instance level alone
-([docs/mamba-pixel-plan.md](../../../docs/mamba-pixel-plan.md)). There is no
-full-schedule checkpoint of it yet.
+against 72.1 for the instance level alone. There is no full-schedule
+checkpoint of it yet.

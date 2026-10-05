@@ -40,8 +40,7 @@ less certain gain than the paper's 1.8. The Swin-T trained here is 3.1 AP
 stronger than the paper's. SELSA on TDViT-T reproduces the paper's Table 3
 (VID AP50 83.8 against 83.9), though SELSA on Swin-T, which the paper does not
 report, scores 84.5. The small and base variants are configured but not yet
-tuned. How every number was reached:
-[docs/tdvit-plan.md](../../../docs/tdvit-plan.md).
+tuned.
 
 ## Configs
 

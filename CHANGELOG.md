@@ -15,14 +15,12 @@
 - COCO-style box evaluation (`vfe/evaluation/coco.py`);
   `ImagenetVIDDataset.evaluate(..., coco_style=True)` reports it beside the
   VID metric.
-- `docs/rewrite-plan.md` closes with an epilogue on the 2.0.0 release;
-  `docs/eovod-plan.md` tracks the new phase. CI no longer runs on pushes to
-  the merged `pure-pytorch-rewrite` branch.
+- CI no longer runs on pushes to the merged `pure-pytorch-rewrite` branch.
 
 ## 2.0.0
 
 Rewritten on plain PyTorch; mmcv, mmdet and mmengine are no longer used.
-Full notes: [docs/release-notes-2.0.md](docs/release-notes-2.0.md).
+Full notes: [the v2.0.0 release](https://github.com/guanxiongsun/vfe.pytorch/releases/tag/v2.0.0).
 
 - `vfe/` implements the models, data pipeline, VID evaluator, training loop,
   samplers and config system that MAMBA and STPN use, on `torch` and
