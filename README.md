@@ -17,19 +17,14 @@ evaluate them, since the official dataset links are no longer reachable.
 
 ## News
 
-- **2026-10-02** — TDViT implemented from its paper, whose code was never
-  released, and reproduced: TDViT-T 50.6 AP and TDViT-T+ 51.4 against the
-  paper's 49.1 and 50.9, with one change to the temporal block that the
-  reproduction called for ([TDViT](#tdvit)).
-- **2026-10-01** — EOVOD reproduced on FCOS: 54.0 AP with LPN and 53.8 with
-  LPN + SPN, against the paper's 54.1 and 53.8. EOVOD also runs on YOLOX,
-  ported from MMDetection and checked against it. MAMBA's pixel level, which
-  the original release left out, is implemented
+- **2026-10-02** — TDViT, whose code was never released, implemented from its
+  paper and reproduced ([configs/vid/tdvit](configs/vid/tdvit)).
+- **2026-10-01** — EOVOD reproduced on FCOS and running on YOLOX; MAMBA's
+  pixel level, which the original release left out, implemented
   ([#7](https://github.com/guanxiongsun/vfe.pytorch/pull/7)).
 - **2026-09-27** — EOVOD implemented from its paper, on a ported FCOS
   ([#6](https://github.com/guanxiongsun/vfe.pytorch/pull/6)).
-- **2026-09-20** — **v2.0**, a rewrite in plain PyTorch. MAMBA and STPN
-  trained with it score 84.06 and 84.54 AP50 (originally 83.82 and 85.15).
+- **2026-09-20** — **v2.0**, a rewrite in plain PyTorch.
 - **2024-02** — v1.0: MAMBA and STPN code and models, with a mirror of
   ImageNet VID and COCO-style annotations.
 
@@ -44,12 +39,11 @@ evaluate them, since the official dataset links are no longer reachable.
   [what changed in 2.0](#what-changed-in-20).
 - **Checked against the original.** Every layer of the port is compared,
   tensor by tensor, with frozen outputs of the original implementation
-  ([docs/parity.md](docs/parity.md)). The YOLOX port matches MMDetection to
-  2.3e-13 in float64, and its training pipeline bit for bit.
-- **Retrained, not only ported.** MAMBA's and STPN's released checkpoints score
-  within 0.02 AP50 of their published results here. Trained from scratch here,
-  MAMBA reaches 84.06 AP50 (published: 83.82), STPN 84.54 (85.15), EOVOD
-  54.0 AP (the paper: 54.1) and TDViT-T 50.6 AP (49.1).
+  ([tools/checks/](tools/checks)).
+- **Retrained, not only ported.** Released checkpoints score within 0.02 AP50
+  of their published results here, and every model is also trained from
+  scratch with this code: STPN lands 0.6 AP50 below its paper, the others
+  match or beat theirs.
 - **What the original releases left out:** MAMBA's pixel level, EOVOD's
   location and size priors (LPN and SPN), EOVOD on YOLOX, and TDViT
   altogether, whose code was never published.
@@ -61,117 +55,22 @@ evaluate them, since the official dataset links are no longer reachable.
 
 ## Results
 
-ImageNet VID validation, AP50 and the standard motion-speed breakdown:
+ImageNet VID validation. AP50 is the dataset's standard metric; AP is
+COCO-style AP over IoU 0.5–0.95, which the EOVOD and TDViT papers report.
 
-| Model | Backbone | AP50 | AP (fast) | AP (med) | AP (slow) | |
-| :-- | :-- | :--: | :--: | :--: | :--: | :-- |
-| Faster R-CNN | ResNet-101 | 76.7 | 52.3 | 74.1 | 84.9 | [reference](https://github.com/Scalsol/mega.pytorch#main-results) |
-| Faster R-CNN | Swin-T | 79.5 | 57.3 | 78.8 | 85.7 | [config](configs/vid/tdvit/frcnn_swint_fpn_3x.py) |
-| **Faster R-CNN** | **TDViT-T** | **80.8** | 59.5 | 80.5 | 87.3 | [config](configs/vid/tdvit/tdvit_t_joint_frcnn_fpn_3x.py) |
-| **Faster R-CNN** | **TDViT-T+** | **81.4** | 57.7 | 80.0 | 89.0 | [config](configs/vid/tdvit/tdvit_tplus_joint_frcnn_fpn_3x.py) |
-| SELSA | ResNet-101 | 81.5 | — | — | — | [reference](https://github.com/open-mmlab/mmtracking/tree/master/configs/vid/selsa) |
-| MEGA | ResNet-101 | 82.9 | 62.7 | 81.6 | 89.4 | [reference](https://github.com/Scalsol/mega.pytorch) |
-| **MAMBA** | ResNet-101 | **83.8** | 65.3 | 83.8 | 89.5 | [config](configs/vid/mamba) · [model](https://huggingface.co/guanxiongsun/vfe.pytorch/tree/main/work_dirs/mamba_r101_dc5_6x) |
-| **STPN** | Swin-T | **85.2** | 64.1 | 84.1 | 91.4 | [config](configs/vid/stpn) · [model](https://huggingface.co/guanxiongsun/vfe.pytorch/tree/main/work_dirs/stpn_swint_adam_9x) |
+| Method | Detector | Backbone | AP50 | AP | |
+| :-- | :-- | :-- | :--: | :--: | :-- |
+| [MAMBA](configs/vid/mamba) (AAAI 2021) | Faster R-CNN | ResNet-101 | 83.8 | — | [model](https://huggingface.co/guanxiongsun/vfe.pytorch/tree/main/work_dirs/mamba_r101_dc5_6x) |
+| [STPN](configs/vid/stpn) (ICCV 2023) | Faster R-CNN | Swin-T | 85.2 | — | [model](https://huggingface.co/guanxiongsun/vfe.pytorch/tree/main/work_dirs/stpn_swint_adam_9x) |
+| [EOVOD](configs/vid/eovod) (ECCV 2022) | FCOS | ResNet-101 | 79.7 | 54.0 | |
+| | YOLOX-M | CSPDarknet | 76.3 | 56.1 | |
+| [TDViT](configs/vid/tdvit) (ECCV 2022) | Faster R-CNN | TDViT-T | 80.8 | 50.6 | |
+| | Faster R-CNN | TDViT-T+ | 81.4 | 51.4 | |
 
-### Reproduced with this code
-
-Measured on 4× GH200, AP50 on the same validation set:
-
-| | released checkpoint, evaluated here | trained here, from scratch | originally published |
-| :-- | :--: | :--: | :--: |
-| MAMBA | 83.80 | 84.06 | 83.82 |
-| STPN | 85.15 | 84.54 | 85.15 |
-
-Evaluation reproduces the released checkpoints to within 0.02 AP50. Training
-reproduces MAMBA and lands 0.61 low on STPN, with per-epoch losses within 0.6%
-of the original run — run-to-run variance, most likely, though that was not
-confirmed with a second seed.
-
-> **MAMBA's schedule.** The published MAMBA model trained epochs 1–3 at batch 4
-> and epochs 4–6 at batch 8 (its checkpoint records a 4-GPU run resumed on 8,
-> and mmcv rescaled the iteration count). Reading the config literally — batch 8
-> throughout — halves the steps in epochs 1–3 and scores 83.16. The 84.06 above
-> follows the published model's own schedule.
-
-> **MAMBA's pixel level.** The released model is the paper's instance-level
-> variant (Table 3, "Ours_ins": 83.7), which the numbers above reproduce. The
-> paper's full model also enhances the feature map before the RPN, and that
-> pixel level was never released
-> ([#4](https://github.com/guanxiongsun/vfe.pytorch/issues/4)). It is now
-> implemented: [`mamba_full_r101_dc5_3x.py`](configs/vid/mamba/mamba_full_r101_dc5_3x.py).
-> After one epoch it scores 75.6 AP50 against 72.1 for the instance level
-> alone ([docs/mamba-pixel-plan.md](docs/mamba-pixel-plan.md)). There is no
-> full-schedule checkpoint of it yet.
-
-### EOVOD
-
-ImageNet VID validation, COCO-style AP as the paper reports it:
-
-| Detector | | AP | AP50 | AP75 | paper |
-| :-- | :-- | :--: | :--: | :--: | :--: |
-| FCOS, ResNet-101 | alone | 49.8 | 73.6 | 54.6 | 49.8 / 73.3 / 54.6 |
-| | + LPN | 54.0 | 79.2 | 59.3 | 54.1 / 79.8 / 59.5 |
-| | + LPN + SPN | 53.8 | 78.9 | 59.2 | 53.8 / 76.9 / 58.9 |
-| YOLOX-M | alone | 55.5 | 75.1 | 61.6 | 49.4 / 69.4 / 55.4 |
-| | + LPN | 56.1 | 75.8 | 62.3 | 53.3 / 75.1 / 58.1 |
-| | + LPN + SPN | 55.4 | 74.7 | 61.6 | 52.7 / 74.5 / 56.7 |
-
-FCOS trains for 9 epochs with
-[`eovod_fcos_r101_fpn_9x_backbone_cls_ctrreg.py`](configs/vid/eovod/eovod_fcos_r101_fpn_9x_backbone_cls_ctrreg.py),
-which aggregates before the FPN as the original code does; FCOS alone trains on
-the same schedule. YOLOX-M trains for 10 epochs from the COCO weights, with
-YOLOX's own recipe applied to video clips
-([`eovod_yolox_m_clips_10e.py`](configs/vid/eovod/eovod_yolox_m_clips_10e.py);
-alone, [`eovod_yolox_m_clips_10e_plain.py`](configs/vid/eovod/eovod_yolox_m_clips_10e_plain.py)).
-Started from COCO, YOLOX-M is already stronger than the paper's, and the
-location prior adds 0.6 AP to it, against 4.2 on FCOS; trained alone on still
-images, as YOLOX usually is, it scores 56.1. The size prior is a test-time
-setting of the same model. The checkpoint released with the original EOVOD code
-scores 54.0 / 79.7 / 59.3 here. How each number was reached:
-[docs/eovod-plan.md](docs/eovod-plan.md) and
-[docs/eovod-yolox-plan.md](docs/eovod-yolox-plan.md).
-
-### TDViT
-
-ImageNet VID validation, Faster R-CNN with an FPN, 3 epochs at batch 8 from
-ImageNet-1K Swin-T weights with Swin's augmentation; COCO-style AP as the
-paper's Table 2 reports it, and the VID metric:
-
-| Backbone | | AP | AP50 | AP75 | VID AP50 | paper (AP / AP50 / AP75) |
-| :-- | :-- | :--: | :--: | :--: | :--: | :--: |
-| Swin-T | | 50.2 | 79.0 | 55.4 | 79.5 | 47.1 / 77.2 / 51.5 |
-| TDViT-T | as published | 46.0 | 75.7 | 49.4 | 76.2 | 49.1 / 78.5 / 52.7 |
-| | joint attention | 50.6 | 80.3 | 56.0 | 80.8 | |
-| TDViT-T+ | joint attention, new blocks copied | **51.4** | **80.8** | **57.3** | **81.4** | 50.9 / 79.9 / 55.7 |
-
-A second seed gives Swin-T 50.6 / 79.0 and TDViT-T 50.6 / 79.7: TDViT-T's
-AP50 gain holds (+0.7 to +1.3), its AP gain (0.0 to +0.4) is within the
-run-to-run spread of 0.4. Trained instead with v1's plain pipeline (resize
-and flip, [`*_v1aug.py`](configs/vid/tdvit)), both tiny models score higher
-and the gap widens: Swin-T 51.1 / 79.4 / 57.0, TDViT-T 51.8 / 81.2 / 57.6
-(VID AP50 79.9 and 81.7); TDViT-T+ scores 51.7 / 81.0 / 57.5 there, no
-better than TDViT-T.
-
-TDViT is implemented from its paper and the backbone of the authors' CVPR
-2022 supplementary code; its repository was never released. As published, a
-temporal block attends from the frame to a reference frame alone, which gives
-up the frame's own spatial attention in half of TDViT-T's blocks: trained
-here next to a Swin-T on the same recipe, it trains worse and tests 4.2 AP
-lower, most of it on fast objects. With one change — each temporal block
-attends over its own window and the reference's together (`attention='joint'`,
-no new parameter) — TDViT-T passes both the Swin-T and the paper's TDViT-T,
-at Swin-T's size and, with `fused_attention=True`, its speed (52.0 against
-51.8 FPS on a GH200). TDViT-T+'s two extra blocks have no ImageNet weights
-and learn nothing at this learning rate from a random start; copied from the
-pretrained blocks before them (`extra_init='copy'`) they add 0.8 AP on Swin's
-augmentation and nothing on the plain recipe — a smaller and less certain
-gain than the paper's 1.8. The Swin-T trained here is 3.1 AP stronger than
-the paper's. SELSA on TDViT-T
-reproduces the paper's Table 3 (VID AP50 83.8 against 83.9), though SELSA on
-Swin-T, which the paper does not report, scores 84.5. The small and base
-variants are configured but not yet tuned. How every number was reached:
-[docs/tdvit-plan.md](docs/tdvit-plan.md).
+MAMBA and STPN are their released checkpoints, evaluated here; EOVOD (with
+its location prior) and TDViT were trained with this code. Each method's
+folder has its comparison with the paper, its baselines and variants, and
+anything its configs do not say.
 
 ## Install
 
@@ -235,15 +134,8 @@ Runs write checkpoints and `*.log.json` logs in the original format, so
 `tools/analyze_train_log.py --compare` can overlay a run on the original one,
 and `--resume-from auto` continues a run exactly, generator states included.
 Slurm scripts for Isambard-AI are in [tools/isambard/](tools/isambard/).
-
-EOVOD on YOLOX starts from Megvii's COCO-trained
-[YOLOX-M](https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_m.pth),
-converted once and passed with `--load-from` (the configs name the path used on
-Isambard-AI):
-
-```bash
-python tools/convert_yolox_megvii.py yolox_m.pth yolox_m_coco_eovod.pth --drop-classifier --prefix detector.
-```
+Method-specific steps, such as converting YOLOX's COCO weights for EOVOD, are
+in each method's folder under [configs/vid/](configs/vid).
 
 ## Tests and parity
 
@@ -253,9 +145,8 @@ python tools/checks/run_parity.py check --all
 ```
 
 The second command re-runs every layer of the port against frozen outputs of
-the original implementation and compares them tensor by tensor. See
-[docs/parity.md](docs/parity.md) for how that works, what it does and does not
-claim, and how to rebuild the oracle. FCOS and YOLOX, ported for EOVOD, have
+the original implementation and compares them tensor by tensor; the docstring
+of [`run_parity.py`](tools/checks/run_parity.py) explains how. FCOS and YOLOX, ported for EOVOD, have
 their own two-environment checks: `tools/checks/parity_fcos.py`,
 `parity_yolox.py` and `parity_yolox_pipeline.py`.
 
@@ -294,6 +185,12 @@ single-frame Faster R-CNN baseline is back, as
 }
 @inproceedings{sun2022eovod,
   title     = {Efficient One-stage Video Object Detection by Exploiting Temporal Consistency},
+  author    = {Sun, Guanxiong and Hua, Yang and Hu, Guosheng and Robertson, Neil},
+  booktitle = {ECCV},
+  year      = {2022}
+}
+@inproceedings{sun2022tdvit,
+  title     = {TDViT: Temporal Dilated Video Transformer for Dense Video Tasks},
   author    = {Sun, Guanxiong and Hua, Yang and Hu, Guosheng and Robertson, Neil},
   booktitle = {ECCV},
   year      = {2022}

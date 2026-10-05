@@ -10,7 +10,7 @@ of those projects that MAMBA and STPN use -- models, data pipeline, evaluator,
 training loop, samplers, config system -- on plain PyTorch, so that neither mmcv
 nor mmdet nor mmengine is imported at runtime. Structure, naming, defaults and
 numerical behaviour deliberately follow the originals: the reimplementation is
-checked against them tensor by tensor (see docs/parity.md).
+checked against them tensor by tensor (see tools/checks/).
 
 Until version 2.0 this repository also vendored MMDetection 2.19.1 in full,
 under `mmdet/`. That tree is preserved at the `v1.0.0` tag and carries its own
